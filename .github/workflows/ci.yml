@@ -17,8 +17,9 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-          extensions: mbstring, pdo, pdo_sqlite, bcmath
+          php-version: '8.3'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, bcmath, ctype, fileinfo, json, tokenizer, xml
+          coverage: none
 
       - name: Copy .env.example
         run: php -r "file_exists('.env') || copy('.env.example', '.env');"
@@ -30,4 +31,7 @@ jobs:
         run: php artisan key:generate
 
       - name: Run Tests
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
         run: vendor/bin/phpunit
