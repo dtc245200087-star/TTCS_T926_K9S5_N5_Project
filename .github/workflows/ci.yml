@@ -2,33 +2,32 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "main", "develop", "feature/*" ]
   pull_request:
     branches: [ "main", "develop" ]
 
 jobs:
-  build-lint-test:
+  laravel-ci:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Dùng cache npm để đảm bảo tốc độ chạy dưới 5 phút (đạt NFR)
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
         with:
-          node-version: 20
-          cache: 'npm'
+          php-version: '8.2'
+          extensions: mbstring, pdo, pdo_sqlite, bcmath
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Copy .env.example
+        run: php -r "file_exists('.env') || copy('.env.example', '.env');"
 
-      - name: Run Lint
-        run: npm run lint
+      - name: Install Dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Generate key
+        run: php artisan key:generate
 
       - name: Run Tests
-        run: npm run test
-
-      - name: Build Project
-        run: npm run build
+        run: vendor/bin/phpunit
