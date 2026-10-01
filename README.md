@@ -12,7 +12,7 @@ Nền tảng điều hành thi công công trình - TTCS Khối 9 Nhóm 5
 
 Nhánh `main` tại thời điểm triển khai chưa có T-08/T-09: bổ sung migration tối thiểu cho `projects`, `work_items`, `tasks` cùng model/factory để API hoạt động. Không triển khai màn hình cây của #14. Bảng `jobs` hiện hữu là hàng đợi Laravel, không phải công việc thi công.
 
-Do T-05/T-06/T-07 chưa được triển khai, API hiện dùng HTTP Basic với tài khoản người dùng và chỉ cho `projects.owner_id` sửa/xoá. Cần tích hợp phân quyền thành viên dự án khi các issue đó hoàn tất; HTTP Basic phải dùng HTTPS ngoài máy phát triển.
+API dùng HTTP Basic với tài khoản người dùng. Quyền truy cập dự án đi qua bảng `project_members`; các route sửa cây hiện cho phép vai trò `admin`, `project_manager` và `team_lead`. Middleware từ chối `403` nếu người dùng không thuộc dự án, vai trò không được phép hoặc route chưa khai vai trò. HTTP Basic phải dùng HTTPS ngoài máy phát triển.
 
 Laravel Boost được cài theo chỉ dẫn bootstrap ban đầu của `AGENTS.md`; chỉ là dependency phát triển.
 

@@ -8,10 +8,6 @@ class UpdateWorkItemRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        if ((int) $this->route('project')->owner_id !== (int) $this->user()->id) {
-            return false;
-        }
-
         abort_unless((int) $this->route('workItem')->project_id === (int) $this->route('project')->id, 404);
 
         return true;
