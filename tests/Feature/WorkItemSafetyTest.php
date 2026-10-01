@@ -7,6 +7,7 @@ use App\Models\Task;
 use App\Models\User;
 use App\Models\WorkItem;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
@@ -174,6 +175,7 @@ class WorkItemSafetyTest extends TestCase
     {
         $user = User::factory()->create();
         $project = Project::factory()->create(['owner_id' => $user->id]);
+        $this->addProjectMember($project, $user, 'project_manager');
         $item = WorkItem::factory()->create(['project_id' => $project->id]);
 
         $this->withServerVariables(['PHP_AUTH_USER' => $user->email, 'PHP_AUTH_PW' => 'password'])
@@ -187,11 +189,26 @@ class WorkItemSafetyTest extends TestCase
         $user = User::factory()->create();
         $this->actingAs($user);
 
-        return Project::factory()->create(['owner_id' => $user->id]);
+        $project = Project::factory()->create(['owner_id' => $user->id]);
+        $this->addProjectMember($project, $user, 'project_manager');
+
+        return $project;
     }
 
     private function url(WorkItem $item): string
     {
         return "/api/v1/projects/{$item->project_id}/work-items/{$item->id}";
+    }
+
+    private function addProjectMember(Project $project, User $user, string $role): void
+    {
+        DB::table('roles')->insertOrIgnore([
+            'name' => $role,
+            'description' => $role,
+        ]);
+
+        $project->members()->attach($user->id, [
+            'role_id' => DB::table('roles')->where('name', $role)->value('id'),
+        ]);
     }
 }

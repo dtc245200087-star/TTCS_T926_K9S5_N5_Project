@@ -8,7 +8,6 @@ use App\Http\Resources\WorkItemResource;
 use App\Models\Project;
 use App\Models\WorkItem;
 use App\Services\WorkItemTree;
-use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -43,9 +42,8 @@ class WorkItemController extends Controller
         }, 3);
     }
 
-    public function destroy(Request $request, Project $project, WorkItem $workItem): Response
+    public function destroy(Project $project, WorkItem $workItem): Response
     {
-        abort_unless((int) $project->owner_id === (int) $request->user()->id, 403);
         abort_unless((int) $workItem->project_id === (int) $project->id, 404);
 
         return DB::transaction(function () use ($project, $workItem): Response {
