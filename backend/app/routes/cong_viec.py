@@ -8,6 +8,7 @@ from ..services.tien_do_service import du_bao_cong_trinh
 
 cong_viec_bp = Blueprint("cong_viec", __name__)
 
+
 @cong_viec_bp.get("")
 def get_all():
     items = []
@@ -23,9 +24,11 @@ def get_all():
         return jsonify({"message": str(error)}), 409
     return jsonify(sorted(items, key=lambda item: item["id"], reverse=True))
 
+
 @cong_viec_bp.post("")
 def create():
     data = request.get_json() or {}
+
     try:
         duration = int(data.get("thoi_luong_ngay", 1))
         progress = float(data.get("tien_do", 0))
@@ -34,6 +37,7 @@ def create():
         actual_finish = date.fromisoformat(data["ngay_hoan_thanh_thuc_te"]) if data.get("ngay_hoan_thanh_thuc_te") else None
     except (TypeError, ValueError):
         return jsonify({"message": "Ngày cần theo định dạng YYYY-MM-DD; thời lượng và tiến độ cần là số hợp lệ."}), 400
+
     item = CongViec(
         ten_cong_viec=data.get("ten_cong_viec", "").strip(),
         mo_ta=data.get("mo_ta"),
@@ -71,6 +75,7 @@ def create():
     db.session.commit()
     return jsonify(_serialize(item)), 201
 
+
 @cong_viec_bp.put("/<int:item_id>")
 def update(item_id):
     item = CongViec.query.get_or_404(item_id)
@@ -88,15 +93,14 @@ def update(item_id):
             item.han_hoan_thanh = date.fromisoformat(data["han_hoan_thanh"]) if data["han_hoan_thanh"] else None
         except (TypeError, ValueError):
             return jsonify({"message": "Hạn hoàn thành cần theo định dạng YYYY-MM-DD."}), 400
-    for field in ["thoi_luong_ngay"]:
-        if field in data:
-            try:
-                duration = int(data[field])
-            except (TypeError, ValueError):
-                return jsonify({"message": "Thời lượng cần là số ngày làm việc từ 1 trở lên."}), 400
-            if duration < 1:
-                return jsonify({"message": "Thời lượng cần là số ngày làm việc từ 1 trở lên."}), 400
-            item.thoi_luong_ngay = duration
+    if "thoi_luong_ngay" in data:
+        try:
+            duration = int(data["thoi_luong_ngay"])
+        except (TypeError, ValueError):
+            return jsonify({"message": "Thời lượng cần là số ngày làm việc từ 1 trở lên."}), 400
+        if duration < 1:
+            return jsonify({"message": "Thời lượng cần là số ngày làm việc từ 1 trở lên."}), 400
+        item.thoi_luong_ngay = duration
     if "ngay_bat_dau_thuc_te" in data:
         try:
             item.ngay_bat_dau_thuc_te = date.fromisoformat(data["ngay_bat_dau_thuc_te"]) if data["ngay_bat_dau_thuc_te"] else None
@@ -127,10 +131,12 @@ def update(item_id):
     db.session.commit()
     return jsonify(_serialize(item))
 
+
 def _serialize(item):
     data = item.to_dict()
     data["phu_thuoc"] = [relation.tien_quyet_id for relation in CongViecPhuThuoc.query.filter_by(cong_viec_id=item.id).all()]
     return data
+
 
 def _validate_predecessors(item, predecessors):
     if not isinstance(predecessors, list) or any(type(value) is not int for value in predecessors) or len(set(predecessors)) != len(predecessors):
@@ -160,6 +166,7 @@ def _validate_predecessors(item, predecessors):
             if remaining[successor_id] == 0:
                 ready.append(successor_id)
     return None if visited == len(graph) else "Mối phụ thuộc tạo thành chu trình trong mạng công việc."
+
 
 @cong_viec_bp.delete("/<int:item_id>")
 def delete(item_id):

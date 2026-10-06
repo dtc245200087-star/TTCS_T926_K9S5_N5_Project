@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from datetime import date
 from ..extensions import db
 from ..models.cong_trinh import CongTrinh
+
 from ..models.lich_lam_viec import LichLamViec
 from ..services.tien_do_service import du_bao_cong_trinh
 
@@ -31,10 +32,14 @@ def create():
     )
     if not item.ma_cong_trinh or not item.ten_cong_trinh:
         return jsonify({"message": "Mã và tên công trình là bắt buộc"}), 400
+
     db.session.add(item)
     db.session.commit()
+
+    # Tạo lịch làm việc mặc định (Thứ 2 - Thứ 7)
     db.session.add(LichLamViec(cong_trinh_id=item.id, ngay_lam_viec=[0, 1, 2, 3, 4, 5]))
     db.session.commit()
+
     return jsonify(item.to_dict()), 201
 
 @cong_trinh_bp.get("/<int:item_id>/tien-do")

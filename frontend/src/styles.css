@@ -76,6 +76,7 @@ td small { display:block; color:#8b96a5; margin-top:4px; }
 .modal input { width:100%; padding:10px; margin-top:6px; border:1px solid #d9e0e8; border-radius:7px; outline:none; }
 .modal input:focus { border-color:#2c6f9f; }
 .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
+
 .schedule-overview { margin-bottom:18px; }
 .schedule-overview select, .calendar-panel select { min-width:230px; padding:9px 11px; border:1px solid #d7dfeb; border-radius:7px; background:#fff; color:#172033; }
 .schedule-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
@@ -100,6 +101,7 @@ td small { display:block; color:#8b96a5; margin-top:4px; }
 .holiday-form label { display:grid; gap:7px; color:#435249; font-size:11px; font-weight:600; }
 .holiday-form input { width:100%; padding:9px 10px; border:1px solid #d7dfeb; border-radius:7px; }
 @media (max-width:760px) { .holiday-form { grid-template-columns:1fr; } .schedule-overview .panel-title { align-items:flex-start; flex-direction:column; } }
+
 @media (max-width: 900px) {
   .sidebar { transform:translateX(-100%); transition:.2s; }
   .sidebar.show { transform:translateX(0); }
