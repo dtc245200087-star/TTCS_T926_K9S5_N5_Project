@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
 
     <title>Quản lý công việc</title>
 
@@ -331,6 +332,9 @@
 </div>
 <script>
     const projectId = 1;
+    const csrfToken = document
+    .querySelector('meta[name="csrf-token"]')
+    .getAttribute('content');
 
     const projectTree = document.getElementById('projectTree');
     const taskFormCard = document.getElementById('taskFormCard');
@@ -573,6 +577,7 @@ cancelButton.addEventListener('click', function () {
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
+                'X-CSRF-TOKEN': csrfToken
             },
             body: JSON.stringify({
                 name: name,
@@ -637,9 +642,10 @@ cancelButton.addEventListener('click', function () {
             `/api/v1/projects/${projectId}/work-items/${workItemId}/tasks/${taskId}`,
             {
                 method: 'DELETE',
-                headers: {
-                    'Accept': 'application/json'
-                }
+               headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken
+                  }
             }
         );
 
