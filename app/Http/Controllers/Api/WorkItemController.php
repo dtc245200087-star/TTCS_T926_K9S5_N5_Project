@@ -8,7 +8,6 @@ use App\Http\Resources\WorkItemResource;
 use App\Models\Project;
 use App\Models\WorkItem;
 use App\Services\WorkItemTree;
-use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -93,45 +92,51 @@ class WorkItemController extends Controller
         }, 3);
     }
 
-    public function destroy(
-        Request $request,
-        Project $project,
-        WorkItem $workItem
+public function destroy(
+    Request $request,
+    Project $project,
+    WorkItem $workItem
+): Response {
+    abort_unless(
+        (int) $project->owner_id === (int) $request->user()->id,
+        403
+    );
+
+    abort_unless(
+        (int) $workItem->project_id === (int) $project->id,
+        404
+    );
+
+    return DB::transaction(function () use (
+        $project,
+        $workItem
     ): Response {
-        abort_unless(
-            (int) $project->owner_id === (int) $request->user()->id,
-            403
+        Project::whereKey($project->id)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $item = $project->workItems()
+            ->whereKey($workItem->id)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        abort_if(
+            $item->tasks()->count() > 0,
+            409,
+            "Không thể xoá hạng mục «{$item->name}» vì đã có công việc."
         );
 
-        abort_unless(
-            (int) $workItem->project_id === (int) $project->id,
-            404
+        abort_if(
+            $item->children()->exists(),
+            409,
+            "Không thể xoá hạng mục «{$item->name}» vì còn hạng mục con."
         );
 
-        return DB::transaction(function () use (
-            $project,
-            $workItem
-        ): Response {
-            Project::whereKey($project->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $item->delete();
 
-            $item = $project->workItems()
-                ->whereKey($workItem->id)
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            abort_if(
-                $item->tasks()->count() > 0,
-                409,
-                "Không thể xoá hạng mục «{$item->name}» vì đã có công việc."
-            );
-
-            abort_if(
-                $item->children()->exists(),
-                409,
-                "Không thể xoá hạng mục «{$item->name}» vì còn hạng mục con."
-            );
+        return response()->noContent();
+    }, 3);
+}
 
             $item->delete();
 

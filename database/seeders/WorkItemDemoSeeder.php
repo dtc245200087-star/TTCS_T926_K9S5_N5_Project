@@ -7,6 +7,7 @@ use App\Models\Task;
 use App\Models\User;
 use App\Models\WorkItem;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 class WorkItemDemoSeeder extends Seeder
 {
@@ -17,6 +18,13 @@ class WorkItemDemoSeeder extends Seeder
         }
         $user = User::factory()->create(['email' => 'issue15-'.fake()->uuid().'@example.test']);
         $project = Project::factory()->create(['name' => 'Dự án kiểm tra T-10', 'owner_id' => $user->id]);
+        DB::table('roles')->updateOrInsert(
+            ['name' => 'project_manager'],
+            ['description' => 'Quản lý dự án'],
+        );
+        $project->members()->attach($user->id, [
+            'role_id' => DB::table('roles')->where('name', 'project_manager')->value('id'),
+        ]);
         $root = WorkItem::factory()->create(['name' => 'Phần móng', 'project_id' => $project->id]);
         $child = WorkItem::factory()->create(['name' => 'Cốt thép', 'project_id' => $project->id, 'parent_id' => $root->id]);
         $leaf = WorkItem::factory()->create(['name' => 'Lắp dựng', 'project_id' => $project->id, 'parent_id' => $child->id]);
