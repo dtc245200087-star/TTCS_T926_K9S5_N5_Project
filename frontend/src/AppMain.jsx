@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import {
-  Building2, ClipboardList, Users, TrendingUp,
+  Building2, ClipboardList, Users, TrendingUp, CalendarDays,
   LayoutDashboard, HardHat, Menu, X, Plus, Trash2, LogOut
 } from "lucide-react";
 import {
   getDashboard, getCongTrinh, getCongViec,
-  createCongTrinh, deleteCongTrinh
+  createCongTrinh, deleteCongTrinh, getLichLamViec, updateLichLamViec,
+  createNgayNghi, deleteNgayNghi, getTienDoCongTrinh, updateCongViec
 } from "./services/api";
 
 function StatCard({ icon, title, value, suffix = "" }) {
@@ -35,6 +36,13 @@ function AppMain() {
   const [dashboard, setDashboard] = useState({});
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [calendars, setCalendars] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [schedule, setSchedule] = useState(null);
+  const [calendarMessage, setCalendarMessage] = useState("");
+  const [holidayForm, setHolidayForm] = useState({ ngay: "", ten: "" });
+  const [savingTask, setSavingTask] = useState(null);
+  const [scheduleRevision, setScheduleRevision] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
@@ -43,7 +51,9 @@ function AppMain() {
     dia_diem: "",
     chu_dau_tu: "",
     tien_do: 0,
-    trang_thai: "Đang thi công"
+    trang_thai: "Đang thi công",
+    ngay_bat_dau: "",
+    ngay_ket_thuc_du_kien: ""
   });
 
   // Xử lý Đăng nhập
@@ -75,6 +85,7 @@ function AppMain() {
       setDashboard(d.data);
       setProjects(p.data);
       setTasks(t.data);
+      if (p.data.length && !selectedProjectId) setSelectedProjectId(String(p.data[0].id));
       setError("");
     } catch (e) {
       setError("Không kết nối được Backend. Hãy kiểm tra Docker hoặc Flask.");
@@ -83,6 +94,76 @@ function AppMain() {
 
   useEffect(() => { loadData(); }, [isAuthenticated]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !selectedProjectId || !["tasks", "calendar"].includes(tab)) return;
+    Promise.all([getLichLamViec(), getTienDoCongTrinh(selectedProjectId)])
+      .then(([calendarResponse, scheduleResponse]) => {
+        setCalendars(calendarResponse.data);
+        setSchedule(scheduleResponse.data);
+      })
+      .catch((e) => setError(e.response?.data?.message || "Không thể tải lịch tiến độ công trình."));
+  }, [isAuthenticated, selectedProjectId, tab, scheduleRevision]);
+
+  const saveWeek = async (event) => {
+    event.preventDefault();
+    const calendar = calendars.find(item => item.cong_trinh_id === Number(selectedProjectId));
+    if (!calendar) return;
+    try {
+      const response = await updateLichLamViec(selectedProjectId, calendar.ngay_lam_viec);
+      setCalendars(items => items.map(item => item.cong_trinh_id === response.data.cong_trinh_id ? response.data : item));
+      const currentSchedule = await getTienDoCongTrinh(selectedProjectId);
+      setSchedule(currentSchedule.data);
+      setCalendarMessage("Đã lưu ngày làm việc. Tiến độ công trình đã được tính lại.");
+    } catch (e) {
+      setCalendarMessage(e.response?.data?.message || "Không thể lưu lịch làm việc.");
+    }
+  };
+
+  const addHoliday = async (event) => {
+    event.preventDefault();
+    try {
+      await createNgayNghi(selectedProjectId, holidayForm);
+      setHolidayForm({ ngay: "", ten: "" });
+      const [calendarResponse, scheduleResponse] = await Promise.all([getLichLamViec(), getTienDoCongTrinh(selectedProjectId)]);
+      setCalendars(calendarResponse.data);
+      setSchedule(scheduleResponse.data);
+      setCalendarMessage("Đã thêm ngày nghỉ và tính lại tiến độ công trình.");
+    } catch (e) {
+      setCalendarMessage(e.response?.data?.message || "Không thể thêm ngày nghỉ.");
+    }
+  };
+
+  const removeHoliday = async (holidayId) => {
+    try {
+      await deleteNgayNghi(holidayId);
+      const [calendarResponse, scheduleResponse] = await Promise.all([getLichLamViec(), getTienDoCongTrinh(selectedProjectId)]);
+      setCalendars(calendarResponse.data);
+      setSchedule(scheduleResponse.data);
+      setCalendarMessage("Đã xóa ngày nghỉ và tính lại tiến độ công trình.");
+    } catch (e) {
+      setCalendarMessage(e.response?.data?.message || "Không thể xóa ngày nghỉ.");
+    }
+  };
+
+  const saveTask = async (task) => {
+    setSavingTask(task.id);
+    try {
+      await updateCongViec(task.id, {
+        tien_do: Number(task.tien_do),
+        thoi_luong_ngay: Number(task.thoi_luong_ngay),
+        ngay_bat_dau_thuc_te: task.ngay_bat_dau_thuc_te || "",
+        ngay_hoan_thanh_thuc_te: task.ngay_hoan_thanh_thuc_te || ""
+      });
+      await loadData();
+      setScheduleRevision(revision => revision + 1);
+      setCalendarMessage("Đã lưu mốc thực tế và tính lại mạng công việc.");
+    } catch (e) {
+      setCalendarMessage(e.response?.data?.message || "Không thể cập nhật công việc.");
+    } finally {
+      setSavingTask(null);
+    }
+  };
+
   const submitProject = async (e) => {
     e.preventDefault();
     try {
@@ -90,7 +171,7 @@ function AppMain() {
       setShowForm(false);
       setForm({
         ma_cong_trinh: "", ten_cong_trinh: "", dia_diem: "",
-        chu_dau_tu: "", tien_do: 0, trang_thai: "Đang thi công"
+        chu_dau_tu: "", tien_do: 0, trang_thai: "Đang thi công", ngay_bat_dau: "", ngay_ket_thuc_du_kien: ""
       });
       loadData();
     } catch (e) {
@@ -103,6 +184,9 @@ function AppMain() {
     await deleteCongTrinh(id);
     loadData();
   };
+
+  const activeCalendar = calendars.find(item => item.cong_trinh_id === Number(selectedProjectId));
+  const weekdays = [[0, "Thứ Hai"], [1, "Thứ Ba"], [2, "Thứ Tư"], [3, "Thứ Năm"], [4, "Thứ Sáu"], [5, "Thứ Bảy"], [6, "Chủ nhật"]];
 
   // NẾU CHƯA ĐĂNG NHẬP -> Hiển thị Form Đăng nhập
   if (!isAuthenticated) {
@@ -225,6 +309,9 @@ function AppMain() {
           <button className={tab === "tasks" ? "active" : ""} onClick={() => {setTab("tasks"); setOpen(false)}}>
             <ClipboardList size={19}/> Công việc
           </button>
+          <button className={tab === "calendar" ? "active" : ""} onClick={() => {setTab("calendar"); setOpen(false)}}>
+            <CalendarDays size={19}/> Lịch làm việc
+          </button>
           <button>
             <Users size={19}/> Nhân sự
           </button>
@@ -242,7 +329,7 @@ function AppMain() {
             {open ? <X /> : <Menu />}
           </button>
           <div>
-            <h1>{tab === "dashboard" ? "Tổng quan điều hành" : tab === "projects" ? "Quản lý công trình" : "Quản lý công việc"}</h1>
+            <h1>{tab === "dashboard" ? "Tổng quan điều hành" : tab === "projects" ? "Quản lý công trình" : tab === "calendar" ? "Lịch làm việc dự án" : "Quản lý công việc"}</h1>
             <p>Theo dõi và điều hành tiến độ thi công</p>
           </div>
           <div className="header-user" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -339,24 +426,58 @@ function AppMain() {
         )}
 
         {tab === "tasks" && (
-          <section className="panel full">
+          <>
+          {calendarMessage && <div className="schedule-message" role="status">{calendarMessage}</div>}
+          <section className="panel full schedule-overview">
             <div className="panel-title">
-              <div><h3>Danh sách công việc</h3><span>Theo dõi các đầu việc thi công</span></div>
+              <div><h3>Dự báo tiến độ</h3><span>Tính lại trên máy chủ từ ngày làm việc và mốc thực tế.</span></div>
+              <select aria-label="Chọn công trình" value={selectedProjectId} onChange={e => setSelectedProjectId(e.target.value)}>
+                {projects.map(project => <option value={project.id} key={project.id}>{project.ten_cong_trinh}</option>)}
+              </select>
             </div>
+            {schedule && <div className="schedule-kpis"><div><span>Ngày hoàn thành hiện tại</span><strong>{schedule.ngay_hoan_thanh_hien_tai}</strong></div><div><span>Ngày hoàn thành kế hoạch</span><strong>{schedule.ngay_hoan_thanh_ke_hoach}</strong></div><div><span>Chênh lệch</span><strong className={schedule.chenh_lech_ngay_lam_viec > 0 ? "schedule-delay" : "schedule-on-time"}>{schedule.chenh_lech_ngay_lam_viec > 0 ? `Chậm ${schedule.chenh_lech_ngay_lam_viec} ngày làm việc` : schedule.chenh_lech_ngay_lam_viec < 0 ? `Sớm ${Math.abs(schedule.chenh_lech_ngay_lam_viec)} ngày làm việc` : "Đúng kế hoạch"}</strong></div></div>}
+          </section>
+          <section className="panel full">
+            <div className="panel-title"><div><h3>Mốc thực tế và dự báo công việc</h3><span>Lưu tiến độ hoặc mốc ngày thực tế để cập nhật toàn bộ mạng công việc.</span></div></div>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>Công việc</th><th>Trạng thái</th><th>Ưu tiên</th><th>Tiến độ</th></tr></thead>
+                <thead><tr><th>Công việc</th><th>Tiến độ %</th><th>Bắt đầu thực tế</th><th>Hoàn thành thực tế</th><th>Dự báo hoàn thành</th><th></th><th></th></tr></thead>
                 <tbody>
-                  {tasks.map(t => <tr key={t.id}>
+                  {tasks.filter(task => task.cong_trinh_id === Number(selectedProjectId)).map(t => <tr key={t.id}>
                     <td><b>{t.ten_cong_viec}</b><small>{t.mo_ta || ""}</small></td>
-                    <td><span className="badge">{t.trang_thai}</span></td>
-                    <td>{t.uu_tien}</td>
-                    <td>{t.tien_do}%</td>
+                    <td><input type="number" min="0" max="100" value={t.tien_do ?? 0} aria-label={`Tiến độ ${t.ten_cong_viec}`} onChange={e => setTasks(current => current.map(task => task.id === t.id ? {...task, tien_do: e.target.value} : task))}/><small>Thời lượng: <input className="duration-input" type="number" min="1" value={t.thoi_luong_ngay ?? 1} aria-label={`Thời lượng ${t.ten_cong_viec}`} onChange={e => setTasks(current => current.map(task => task.id === t.id ? {...task, thoi_luong_ngay: e.target.value} : task))}/> ngày</small></td>
+                    <td><input type="date" value={t.ngay_bat_dau_thuc_te || ""} aria-label={`Ngày bắt đầu ${t.ten_cong_viec}`} onChange={e => setTasks(current => current.map(task => task.id === t.id ? {...task, ngay_bat_dau_thuc_te: e.target.value} : task))}/></td>
+                    <td><input type="date" value={t.ngay_hoan_thanh_thuc_te || ""} aria-label={`Ngày hoàn thành ${t.ten_cong_viec}`} onChange={e => setTasks(current => current.map(task => task.id === t.id ? {...task, ngay_hoan_thanh_thuc_te: e.target.value} : task))}/></td>
+                    <td>{t.ngay_hoan_thanh_du_bao || "—"}</td>
+                    <td>{t.la_cong_viec_gang ? <span className="critical-badge">Công việc găng</span> : "—"}</td>
+                    <td><button className="save-schedule-btn" disabled={savingTask === t.id} onClick={() => saveTask(t)}>{savingTask === t.id ? "Đang lưu…" : "Lưu mốc"}</button></td>
                   </tr>)}
                 </tbody>
               </table>
             </div>
           </section>
+          </>
+        )}
+
+        {tab === "calendar" && (
+          <>
+            {calendarMessage && <div className="schedule-message" role="status">{calendarMessage}</div>}
+            <section className="panel full calendar-panel">
+              <div className="panel-title"><div><h3>Lịch làm việc công trình</h3><span>Mỗi công trình có lịch riêng, mặc định làm việc 6 ngày trong tuần.</span></div>
+                <select aria-label="Chọn công trình" value={selectedProjectId} onChange={e => setSelectedProjectId(e.target.value)}>{projects.map(project => <option value={project.id} key={project.id}>{project.ten_cong_trinh}</option>)}</select>
+              </div>
+              {activeCalendar && <form onSubmit={saveWeek}>
+                <h4>Ngày làm việc trong tuần</h4>
+                <div className="weekday-picker">{weekdays.map(([value, label]) => <label key={value}><input type="checkbox" checked={activeCalendar.ngay_lam_viec.includes(value)} onChange={e => setCalendars(current => current.map(item => item.cong_trinh_id === Number(selectedProjectId) ? {...item, ngay_lam_viec: e.target.checked ? [...item.ngay_lam_viec, value].sort() : item.ngay_lam_viec.filter(day => day !== value)} : item))}/>{label}</label>)}</div>
+                <button className="save-schedule-btn">Lưu lịch tuần</button>
+              </form>}
+            </section>
+            {activeCalendar && <section className="panel full calendar-panel">
+              <div className="panel-title"><div><h3>Ngày nghỉ và ngày lễ</h3><span>Ngày nghỉ được loại khỏi phép tính tiến độ.</span></div></div>
+              <form className="holiday-form" onSubmit={addHoliday}><label>Ngày nghỉ<input type="date" required value={holidayForm.ngay} onChange={e => setHolidayForm({...holidayForm, ngay: e.target.value})}/></label><label>Tên ngày nghỉ<input required maxLength="120" value={holidayForm.ten} onChange={e => setHolidayForm({...holidayForm, ten: e.target.value})} placeholder="Ví dụ: Nghỉ lễ"/></label><button className="save-schedule-btn">Thêm ngày nghỉ</button></form>
+              <div className="table-scroll"><table><thead><tr><th>Ngày</th><th>Tên ngày nghỉ</th><th></th></tr></thead><tbody>{activeCalendar.ngay_nghi.map(day => <tr key={day.id}><td>{day.ngay}</td><td>{day.ten}</td><td><button className="remove-holiday-btn" onClick={() => removeHoliday(day.id)}>Xóa</button></td></tr>)}{!activeCalendar.ngay_nghi.length && <tr><td colSpan="3">Chưa khai báo ngày nghỉ.</td></tr>}</tbody></table></div>
+            </section>}
+          </>
         )}
       </main>
 
@@ -368,6 +489,8 @@ function AppMain() {
             <label>Tên công trình<input required value={form.ten_cong_trinh} onChange={e=>setForm({...form, ten_cong_trinh:e.target.value})}/></label>
             <label>Địa điểm<input value={form.dia_diem} onChange={e=>setForm({...form, dia_diem:e.target.value})}/></label>
             <label>Chủ đầu tư<input value={form.chu_dau_tu} onChange={e=>setForm({...form, chu_dau_tu:e.target.value})}/></label>
+            <label>Ngày bắt đầu<input type="date" value={form.ngay_bat_dau} onChange={e=>setForm({...form, ngay_bat_dau:e.target.value})}/></label>
+            <label>Ngày hoàn thành kế hoạch<input type="date" value={form.ngay_ket_thuc_du_kien} onChange={e=>setForm({...form, ngay_ket_thuc_du_kien:e.target.value})}/></label>
             <label>Tiến độ (%)<input type="number" min="0" max="100" value={form.tien_do} onChange={e=>setForm({...form, tien_do:e.target.value})}/></label>
             <div className="modal-actions"><button type="button" className="outline-btn" onClick={()=>setShowForm(false)}>Hủy</button><button className="primary-btn">Lưu công trình</button></div>
           </form>
