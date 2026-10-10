@@ -1,3 +1,0 @@
--- Database initialization.
--- Flask SQLAlchemy sẽ tự tạo bảng khi backend khởi động.
--- Có thể thêm dữ liệu mẫu tại đây nếu cần.
