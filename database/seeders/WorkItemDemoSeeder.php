@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\DailyDiary;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
@@ -29,6 +30,22 @@ class WorkItemDemoSeeder extends Seeder
         $child = WorkItem::factory()->create(['name' => 'Cốt thép', 'project_id' => $project->id, 'parent_id' => $root->id]);
         $leaf = WorkItem::factory()->create(['name' => 'Lắp dựng', 'project_id' => $project->id, 'parent_id' => $child->id]);
         Task::factory()->create(['name' => 'Kiểm tra cốt thép', 'work_item_id' => $child->id]);
+        $diary = DailyDiary::factory()->create([
+            'project_id' => $project->id,
+            'recorded_by' => $user->id,
+            'diary_date' => now()->toDateString(),
+            'workforce_count' => 10,
+            'workforce_notes' => '8 thợ xây, 2 thợ điện',
+            'equipment_notes' => '1 máy trộn bê tông, 2 máy cắt',
+            'weather_condition' => 'sunny',
+            'weather_notes' => 'Trời nắng, thi công bình thường',
+        ]);
+        $diary->entries()->create([
+            'work_item_id' => $leaf->id,
+            'recorded_by' => $user->id,
+            'entry_time' => '09:00',
+            'work_description' => 'Lắp dựng cốt thép phần móng và kiểm tra kích thước trước khi nghiệm thu.',
+        ]);
         $this->command?->line(json_encode([
             'email' => $user->email, 'password' => 'password',
             'project' => $project->id, 'root' => $root->id, 'child' => $child->id, 'leaf' => $leaf->id,

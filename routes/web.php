@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\DailyDiaryController;
 
 Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [LoginController::class, 'login']);
@@ -36,6 +37,8 @@ Route::get('/safety', function () {
     return view('safety.index');
 })->middleware('auth');
 
-Route::get('/diaries', function () {
-    return view('diaries.index');
-})->middleware('auth');
+Route::middleware('auth')->group(function (): void {
+    Route::get('/diaries', [DailyDiaryController::class, 'index'])->name('diaries.index');
+    Route::post('/diaries/entries', [DailyDiaryController::class, 'storeEntry'])->name('diaries.entries.store');
+    Route::put('/diaries/daily-summary', [DailyDiaryController::class, 'updateDailySummary'])->name('diaries.summary.update');
+});
