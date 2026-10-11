@@ -40,4 +40,5 @@ Route::get('/safety', function () {
 Route::middleware('auth')->group(function (): void {
     Route::get('/diaries', [DailyDiaryController::class, 'index'])->name('diaries.index');
     Route::post('/diaries/entries', [DailyDiaryController::class, 'storeEntry'])->name('diaries.entries.store');
+    Route::put('/diaries/daily-summary', [DailyDiaryController::class, 'updateDailySummary'])->name('diaries.summary.update');
 });

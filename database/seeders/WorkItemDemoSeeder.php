@@ -34,6 +34,11 @@ class WorkItemDemoSeeder extends Seeder
             'project_id' => $project->id,
             'recorded_by' => $user->id,
             'diary_date' => now()->toDateString(),
+            'workforce_count' => 10,
+            'workforce_notes' => '8 thợ xây, 2 thợ điện',
+            'equipment_notes' => '1 máy trộn bê tông, 2 máy cắt',
+            'weather_condition' => 'sunny',
+            'weather_notes' => 'Trời nắng, thi công bình thường',
         ]);
         $diary->entries()->create([
             'work_item_id' => $leaf->id,

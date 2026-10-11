@@ -10,6 +10,7 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 class DailyDiaryController extends Controller
@@ -76,6 +77,14 @@ class DailyDiaryController extends Controller
             'selectedWorkItemId' => $selectedWorkItemId,
             'dailyDiary' => $dailyDiary,
             'entries' => $entries,
+            'weatherLabels' => [
+                'sunny' => 'Nắng',
+                'cloudy' => 'Nhiều mây',
+                'rainy' => 'Mưa',
+                'stormy' => 'Mưa dông',
+                'windy' => 'Gió lớn',
+                'other' => 'Khác',
+            ],
         ]);
     }
 
@@ -128,6 +137,54 @@ class DailyDiaryController extends Controller
             'project' => $project->id,
             'date' => $validated['diary_date'],
         ])->with('status', 'Đã thêm mục nhật ký vào ngày đã chọn.');
+    }
+
+    public function updateDailySummary(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'project_id' => ['required', 'integer', 'exists:projects,id'],
+            'diary_date' => ['required', 'date_format:Y-m-d'],
+            'workforce_count' => ['nullable', 'integer', 'min:0', 'max:10000'],
+            'workforce_notes' => ['nullable', 'string', 'max:4000'],
+            'equipment_notes' => ['nullable', 'string', 'max:4000'],
+            'weather_condition' => [
+                'nullable',
+                Rule::in(['sunny', 'cloudy', 'rainy', 'stormy', 'windy', 'other']),
+            ],
+            'weather_notes' => ['nullable', 'string', 'max:4000'],
+        ]);
+
+        $user = $request->user();
+        abort_unless($user instanceof User, 401);
+
+        $project = $this->accessibleProjects($user)
+            ->whereKey($validated['project_id'])
+            ->firstOrFail();
+
+        DB::transaction(function () use ($validated, $project, $user): void {
+            $dailyDiary = DailyDiary::query()->firstOrNew([
+                'project_id' => $project->id,
+                'diary_date' => $validated['diary_date'],
+            ]);
+
+            if (! $dailyDiary->exists) {
+                $dailyDiary->recorded_by = $user->id;
+            }
+
+            $dailyDiary->fill([
+                'workforce_count' => $validated['workforce_count'] ?? null,
+                'workforce_notes' => $validated['workforce_notes'] ?? null,
+                'equipment_notes' => $validated['equipment_notes'] ?? null,
+                'weather_condition' => $validated['weather_condition'] ?? null,
+                'weather_notes' => $validated['weather_notes'] ?? null,
+            ]);
+            $dailyDiary->save();
+        });
+
+        return redirect()->route('diaries.index', [
+            'project' => $project->id,
+            'date' => $validated['diary_date'],
+        ])->with('status', 'Đã lưu nhân lực, thiết bị và thời tiết trong ngày.');
     }
 
     /**

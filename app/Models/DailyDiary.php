@@ -15,12 +15,18 @@ class DailyDiary extends Model
         'project_id',
         'recorded_by',
         'diary_date',
+        'workforce_count',
+        'workforce_notes',
+        'equipment_notes',
+        'weather_condition',
+        'weather_notes',
     ];
 
     protected function casts(): array
     {
         return [
             'diary_date' => 'date',
+            'workforce_count' => 'integer',
         ];
     }
 

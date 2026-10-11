@@ -14,6 +14,11 @@ class DailyDiaryFactory extends Factory
             'project_id' => Project::factory(),
             'recorded_by' => User::factory(),
             'diary_date' => fake()->date(),
+            'workforce_count' => fake()->numberBetween(1, 30),
+            'workforce_notes' => fake()->optional()->sentence(),
+            'equipment_notes' => fake()->optional()->sentence(),
+            'weather_condition' => fake()->randomElement(['sunny', 'cloudy', 'rainy', 'stormy', 'windy', 'other']),
+            'weather_notes' => fake()->optional()->sentence(),
         ];
     }
 }

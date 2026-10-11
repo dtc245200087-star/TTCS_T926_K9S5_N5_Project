@@ -94,11 +94,16 @@
         .badge { flex: 0 0 auto; border-radius: 999px; background: #e0f2fe; color: #0c4a6e; padding: 8px 12px; font-size: 14px; font-weight: 800; }
         .diary-content { margin: 0 0 14px; color: #1f2937; line-height: 1.65; white-space: pre-line; }
         .diary-info { display: flex; flex-wrap: wrap; gap: 8px 22px; border-top: 1px solid #dbe1e9; padding-top: 13px; color: #334155; font-size: 14px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+        .summary-item { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; }
+        .summary-item strong { display: block; color: #111827; margin-bottom: 5px; }
+        .summary-item span { display: block; color: #334155; line-height: 1.5; white-space: pre-line; }
         .empty { border: 2px dashed #94a3b8; border-radius: 10px; padding: 24px; background: #fff; color: #334155; text-align: center; line-height: 1.5; }
 
         @media (max-width: 900px) {
             .sidebar { width: 210px; flex-basis: 210px; }
             .filter { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .summary-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 700px) {
             .layout { display: block; }
@@ -148,7 +153,7 @@
             <div class="page-header">
                 <div>
                     <h1>Nhật ký công trường</h1>
-                    <p>Ghi nhận công việc đã thực hiện theo ngày và hạng mục.</p>
+                    <p>Ghi nhận công việc, nhân lực, thiết bị và thời tiết theo ngày.</p>
                 </div>
             </div>
 
@@ -192,6 +197,54 @@
             </form>
 
             @if ($selectedProject)
+                <section class="panel" aria-labelledby="daily-summary-heading">
+                    <h2 id="daily-summary-heading">Thông tin trong ngày</h2>
+                    <p class="panel-intro">Lưu nhân lực, thiết bị và thời tiết một lần cho dự án và ngày đã chọn.</p>
+
+                    <form method="POST" action="{{ route('diaries.summary.update') }}">
+                        @csrf
+                        @method('PUT')
+                        <input type="hidden" name="project_id" value="{{ $selectedProject->id }}">
+                        <input type="hidden" name="diary_date" value="{{ $selectedDate }}">
+
+                        <div class="form-grid">
+                            <div class="field">
+                                <label for="workforce-count">Nhân lực (số người)</label>
+                                <input id="workforce-count" type="number" name="workforce_count" min="0" max="10000" inputmode="numeric" value="{{ old('workforce_count', $dailyDiary?->workforce_count) }}" aria-describedby="workforce-count-error">
+                                @error('workforce_count')<div id="workforce-count-error" class="field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="field">
+                                <label for="weather-condition">Thời tiết</label>
+                                <select id="weather-condition" name="weather_condition">
+                                    <option value="">Chưa ghi nhận</option>
+                                    @foreach ($weatherLabels as $value => $label)
+                                        <option value="{{ $value }}" @selected(old('weather_condition', $dailyDiary?->weather_condition) === $value)>{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                                @error('weather_condition')<div class="field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="field field-wide">
+                                <label for="workforce-notes">Ghi chú nhân lực</label>
+                                <textarea id="workforce-notes" name="workforce_notes" maxlength="4000" placeholder="Ví dụ: 8 thợ xây, 2 thợ điện">{{ old('workforce_notes', $dailyDiary?->workforce_notes) }}</textarea>
+                                @error('workforce_notes')<div class="field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="field field-wide">
+                                <label for="equipment-notes">Thiết bị sử dụng</label>
+                                <textarea id="equipment-notes" name="equipment_notes" maxlength="4000" placeholder="Tên thiết bị, số lượng hoặc tình trạng sử dụng">{{ old('equipment_notes', $dailyDiary?->equipment_notes) }}</textarea>
+                                @error('equipment_notes')<div class="field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="field field-wide">
+                                <label for="weather-notes">Ghi chú thời tiết</label>
+                                <textarea id="weather-notes" name="weather_notes" maxlength="4000" placeholder="Ví dụ: Mưa từ 14:00, tạm dừng đổ bê tông">{{ old('weather_notes', $dailyDiary?->weather_notes) }}</textarea>
+                                @error('weather_notes')<div class="field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="field field-wide">
+                                <button class="btn" type="submit">Lưu thông tin trong ngày</button>
+                            </div>
+                        </div>
+                    </form>
+                </section>
+
                 <section class="panel" aria-labelledby="new-entry-heading">
                     <h2 id="new-entry-heading">Thêm mục nhật ký</h2>
                     <p class="panel-intro">Mỗi mục phải gắn với hạng mục để có thể tra cứu theo hồ sơ thi công.</p>
@@ -239,6 +292,20 @@
                             <p>{{ $selectedProject->name }} · {{ $entries->count() }} mục</p>
                         </div>
                     </div>
+
+                    @if ($dailyDiary && ($dailyDiary->workforce_count !== null || $dailyDiary->workforce_notes || $dailyDiary->equipment_notes || $dailyDiary->weather_condition || $dailyDiary->weather_notes))
+                        <div class="summary-grid" aria-label="Thông tin nhân lực, thiết bị và thời tiết">
+                            @if ($dailyDiary->workforce_count !== null || $dailyDiary->workforce_notes)
+                                <div class="summary-item"><strong>Nhân lực</strong><span>{{ $dailyDiary->workforce_count !== null ? $dailyDiary->workforce_count.' người' : 'Chưa nhập số lượng' }}{{ $dailyDiary->workforce_notes ? "\n".$dailyDiary->workforce_notes : '' }}</span></div>
+                            @endif
+                            @if ($dailyDiary->equipment_notes)
+                                <div class="summary-item"><strong>Thiết bị</strong><span>{{ $dailyDiary->equipment_notes }}</span></div>
+                            @endif
+                            @if ($dailyDiary->weather_condition || $dailyDiary->weather_notes)
+                                <div class="summary-item"><strong>Thời tiết</strong><span>{{ $weatherLabels[$dailyDiary->weather_condition] ?? 'Chưa ghi nhận' }}{{ $dailyDiary->weather_notes ? "\n".$dailyDiary->weather_notes : '' }}</span></div>
+                            @endif
+                        </div>
+                    @endif
 
                     @if ($entries->isEmpty())
                         <div class="empty">Chưa có mục nhật ký phù hợp với bộ lọc. Hãy thêm nội dung công việc cho ngày này.</div>
