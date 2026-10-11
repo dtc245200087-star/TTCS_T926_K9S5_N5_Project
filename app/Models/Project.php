@@ -24,4 +24,9 @@ class Project extends Model
     {
         return $this->hasMany(WorkItem::class);
     }
+
+    public function dailyDiaries(): HasMany
+    {
+        return $this->hasMany(DailyDiary::class);
+    }
 }

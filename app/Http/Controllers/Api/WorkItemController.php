@@ -131,6 +131,12 @@ class WorkItemController extends Controller
                 "Không thể xoá hạng mục «{$item->name}» vì còn hạng mục con."
             );
 
+            abort_if(
+                $item->diaryEntries()->exists(),
+                409,
+                "Không thể xoá hạng mục «{$item->name}» vì đã được ghi trong nhật ký công trường."
+            );
+
             $item->delete();
 
             return response()->noContent();
