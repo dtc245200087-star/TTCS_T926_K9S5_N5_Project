@@ -58,3 +58,12 @@ Mở `http://localhost:5173`. Cơ sở dữ liệu tài khoản cục bộ đư�
 - `GET /api/auth/users`, `POST /api/auth/users`, `PATCH /api/auth/users/<id>` — chỉ quản trị viên.
 
 API trả `401` nếu chưa đăng nhập, `403` nếu tài khoản không đủ quyền và yêu cầu `X-CSRF-Token` trên mọi yêu cầu thay đổi dữ liệu. Cookie phiên là HttpOnly, SameSite=Lax; mật khẩu được băm trước khi ghi SQLite. Quản trị viên cuối cùng không thể bị khóa/hạ quyền, và người dùng không thể tự khóa hoặc tự hạ quyền.
+
+## Cập nhật tiến độ thực tế
+
+Trong mục **Công việc**, quản trị viên, quản lý công trình và kỹ sư có thể cập nhật ngày bắt đầu thực tế, ngày kết thúc thực tế và phần trăm hoàn thành (0–100). Các giá trị thực tế được lưu riêng, không ghi đè trạng thái hay hạn kế hoạch. Ngày kết thúc không được trước ngày bắt đầu; máy chủ và SQLite cùng kiểm tra các ràng buộc này.
+
+- `PATCH /api/cong-viec/<id>` — cập nhật `ngay_bat_dau_thuc_te`, `ngay_ket_thuc_thuc_te` (ngày `YYYY-MM-DD` hoặc `null`) và `phan_tram_hoan_thanh` (số nguyên 0–100). Chỉ vai trò `admin`, `manager`, `engineer` được cập nhật.
+- `GET /api/cong-viec` — trả thêm các trường tiến độ thực tế để hiển thị trong bảng.
+
+Các cột tiến độ thực tế được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.

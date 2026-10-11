@@ -28,5 +28,13 @@ CREATE TABLE IF NOT EXISTS cong_viec (
     cong_trinh VARCHAR(255),
     nguoi_phu_trach VARCHAR(150),
     trang_thai VARCHAR(100),
-    han DATE
+    han DATE,
+    ngay_bat_dau_thuc_te DATE,
+    ngay_ket_thuc_thuc_te DATE,
+    phan_tram_hoan_thanh INTEGER NOT NULL DEFAULT 0
+        CHECK (phan_tram_hoan_thanh BETWEEN 0 AND 100),
+    CHECK (
+        ngay_bat_dau_thuc_te IS NULL OR ngay_ket_thuc_thuc_te IS NULL
+        OR ngay_ket_thuc_thuc_te >= ngay_bat_dau_thuc_te
+    )
 );

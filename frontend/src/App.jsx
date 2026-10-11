@@ -71,7 +71,7 @@ function App({ user, onLogout, onPasswordChanged }) {
         {page === "Tổng quan" ? <Dashboard data={data}/> :
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Tiến độ và đường găng" ? <SchedulePage user={user} /> :
-         page === "Công việc" ? <Tasks data={data?.cong_viec_hom_nay || []}/> :
+         page === "Công việc" ? <Tasks canUpdate={["admin", "manager", "engineer"].includes(user.role)}/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
@@ -234,17 +234,134 @@ function Projects({data, refresh, canManage}) {
   );
 }
 
-function Tasks({data}) {
+function Tasks({canUpdate}) {
+  const [data, setData] = useState([]);
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [form, setForm] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function loadTasks() {
+    const response = await apiFetch(`${API}/cong-viec`);
+    if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
+    setData(await response.json());
+  }
+
+  useEffect(() => {
+    loadTasks().catch(err => setError(err.message));
+  }, []);
+
+  function openProgressForm(task) {
+    setSelectedTask(task);
+    setForm({
+      ngay_bat_dau_thuc_te: task.ngay_bat_dau_thuc_te || "",
+      ngay_ket_thuc_thuc_te: task.ngay_ket_thuc_thuc_te || "",
+      phan_tram_hoan_thanh: String(task.phan_tram_hoan_thanh ?? 0),
+    });
+    setError("");
+  }
+
+  async function saveProgress(event) {
+    event.preventDefault();
+    setError("");
+    if (
+      form.ngay_bat_dau_thuc_te &&
+      form.ngay_ket_thuc_thuc_te &&
+      form.ngay_ket_thuc_thuc_te < form.ngay_bat_dau_thuc_te
+    ) {
+      setError("Ngày kết thúc thực tế không được trước ngày bắt đầu thực tế.");
+      return;
+    }
+    const completion = Number(form.phan_tram_hoan_thanh);
+    if (!Number.isInteger(completion) || completion < 0 || completion > 100) {
+      setError("Phần trăm hoàn thành phải là số nguyên từ 0 đến 100.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const response = await apiFetch(`${API}/cong-viec/${selectedTask.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ngay_bat_dau_thuc_te: form.ngay_bat_dau_thuc_te || null,
+          ngay_ket_thuc_thuc_te: form.ngay_ket_thuc_thuc_te || null,
+          phan_tram_hoan_thanh: completion,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Không thể cập nhật tiến độ.");
+      setData(current => current.map(task => task.id === result.id ? result : task));
+      setSelectedTask(null);
+      setForm(null);
+    } catch (err) {
+      setError(err.message || "Không thể kết nối máy chủ.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="content">
       <div className="page-title">
         <div>
           <h1>Quản lý công việc</h1>
-          <p>Theo dõi nhiệm vụ và người phụ trách tại công trường.</p>
+          <p>Theo dõi kế hoạch và cập nhật riêng ngày, phần trăm hoàn thành thực tế.</p>
         </div>
-        <button className="primary"><Plus size={18}/> Thêm công việc</button>
       </div>
-      <Table data={data} columns={["ten","cong_trinh","nguoi_phu_trach","trang_thai","han"]} headers={["Công việc","Công trình","Người phụ trách","Trạng thái","Hạn"]}/>
+      {error && !selectedTask && <div className="alert" role="alert">{error}</div>}
+      <section className="panel table-panel">
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Công việc</th><th>Công trình</th><th>Người phụ trách</th>
+              <th>Trạng thái kế hoạch</th><th>Hạn kế hoạch</th>
+              <th>Bắt đầu thực tế</th><th>Kết thúc thực tế</th>
+              <th>Hoàn thành thực tế</th>{canUpdate && <th>Thao tác</th>}
+            </tr></thead>
+            <tbody>
+              {data.map(task => <tr key={task.id}>
+                <td>{task.ten}</td><td>{task.cong_trinh}</td><td>{task.nguoi_phu_trach}</td>
+                <td><Status value={task.trang_thai}/></td><td>{task.han || "—"}</td>
+                <td>{task.ngay_bat_dau_thuc_te || "—"}</td>
+                <td>{task.ngay_ket_thuc_thuc_te || "—"}</td>
+                <td><div className="actual-progress">
+                  <div className="bar"><i style={{ width: `${task.phan_tram_hoan_thanh}%` }}/></div>
+                  <span>{task.phan_tram_hoan_thanh}%</span>
+                </div></td>
+                {canUpdate && <td><button className="btn btn-primary" onClick={() => openProgressForm(task)}>Cập nhật</button></td>}
+              </tr>)}
+              {!data.length && <tr><td colSpan={canUpdate ? 9 : 8}>Chưa có công việc.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {selectedTask && form && <div className="modal-bg" onMouseDown={event => {
+        if (event.target === event.currentTarget && !saving) setSelectedTask(null);
+      }}>
+        <form className="modal progress-modal" onSubmit={saveProgress} aria-labelledby="progress-modal-title">
+          <div className="modal-head">
+            <div><h2 id="progress-modal-title">Cập nhật tiến độ thực tế</h2><p>{selectedTask.ten}</p></div>
+            <button type="button" aria-label="Đóng" onClick={() => setSelectedTask(null)}>✕</button>
+          </div>
+          <p className="progress-plan-note">Kế hoạch: hạn {selectedTask.han || "chưa có"} · trạng thái {selectedTask.trang_thai}. Cập nhật này không thay đổi kế hoạch.</p>
+          <label>Ngày bắt đầu thực tế
+            <input type="date" value={form.ngay_bat_dau_thuc_te} onChange={event => setForm({ ...form, ngay_bat_dau_thuc_te: event.target.value })}/>
+          </label>
+          <label>Ngày kết thúc thực tế
+            <input type="date" min={form.ngay_bat_dau_thuc_te || undefined} value={form.ngay_ket_thuc_thuc_te} onChange={event => setForm({ ...form, ngay_ket_thuc_thuc_te: event.target.value })}/>
+          </label>
+          <label>Hoàn thành thực tế (%)
+            <input type="number" min="0" max="100" step="1" required value={form.phan_tram_hoan_thanh} onChange={event => setForm({ ...form, phan_tram_hoan_thanh: event.target.value })}/>
+          </label>
+          {error && <div className="alert" role="alert">{error}</div>}
+          <div className="progress-form-actions">
+            <button className="btn btn-primary" disabled={saving}>{saving ? "Đang lưu…" : "Lưu tiến độ"}</button>
+            <button className="btn" type="button" disabled={saving} onClick={() => setSelectedTask(null)}>Hủy</button>
+          </div>
+        </form>
+      </div>}
     </div>
   );
 }
