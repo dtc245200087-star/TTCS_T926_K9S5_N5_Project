@@ -61,9 +61,9 @@ API trả `401` nếu chưa đăng nhập, `403` nếu tài khoản không đủ
 
 ## Cập nhật tiến độ thực tế
 
-Trong mục **Công việc**, quản trị viên, quản lý công trình và kỹ sư có thể cập nhật ngày bắt đầu thực tế, ngày kết thúc thực tế và phần trăm hoàn thành (0–100). Các giá trị thực tế được lưu riêng, không ghi đè trạng thái hay hạn kế hoạch. Ngày kết thúc không được trước ngày bắt đầu; máy chủ và SQLite cùng kiểm tra các ràng buộc này.
+Trong mục **Công việc**, quản trị viên, quản lý công trình và kỹ sư có thể mở form bằng nút **Cập nhật**. Mục **Tiến độ và đường găng** dùng cùng dữ liệu `GET /api/cong-viec`; chọn thanh của một công việc trong cơ sở dữ liệu sẽ mở cùng form cập nhật. Tiến độ thực tế được tô màu trên thanh Gantt. Dữ liệu kế hoạch của biểu đồ (ES, EF, LS, LF, độ trễ và trạng thái đường găng) được lưu cùng công việc và không bị thay đổi khi cập nhật tiến độ thực tế. Công việc không có bản ghi tương ứng không thể sửa. Ngày kết thúc không được trước ngày bắt đầu; máy chủ và SQLite cùng kiểm tra các ràng buộc này.
 
 - `PATCH /api/cong-viec/<id>` — cập nhật `ngay_bat_dau_thuc_te`, `ngay_ket_thuc_thuc_te` (ngày `YYYY-MM-DD` hoặc `null`) và `phan_tram_hoan_thanh` (số nguyên 0–100). Chỉ vai trò `admin`, `manager`, `engineer` được cập nhật.
-- `GET /api/cong-viec` — trả thêm các trường tiến độ thực tế để hiển thị trong bảng.
+- `GET /api/cong-viec` — trả các trường tiến độ thực tế và kế hoạch Gantt để cả hai mục dùng chung dữ liệu.
 
-Các cột tiến độ thực tế được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
+Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.

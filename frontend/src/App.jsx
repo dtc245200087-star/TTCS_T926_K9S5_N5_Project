@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
-import scheduleData from "./mocks/scheduleData";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -29,11 +28,82 @@ function App({ user, onLogout, onPasswordChanged }) {
   const [page, setPage] = useState("Tổng quan");
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
+  const [taskData, setTaskData] = useState([]);
+  const [tasksError, setTasksError] = useState("");
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [progressForm, setProgressForm] = useState(null);
+  const [progressError, setProgressError] = useState("");
+  const [savingProgress, setSavingProgress] = useState(false);
+  const canUpdateProgress = ["admin", "manager", "engineer"].includes(user.role);
 
   const loadDashboard = () =>
     apiFetch(`${API}/dashboard`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setData).catch(() => setData(null));
 
   useEffect(() => { loadDashboard(); }, []);
+
+  useEffect(() => {
+    if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
+    let active = true;
+    setTasksError("");
+    apiFetch(`${API}/cong-viec`)
+      .then(response => {
+        if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
+        return response.json();
+      })
+      .then(tasks => { if (active) setTaskData(tasks); })
+      .catch(error => { if (active) setTasksError(error.message); });
+    return () => { active = false; };
+  }, [page]);
+
+  function openProgressForm(task) {
+    setSelectedTask(task);
+    setProgressForm({
+      ngay_bat_dau_thuc_te: task.ngay_bat_dau_thuc_te || "",
+      ngay_ket_thuc_thuc_te: task.ngay_ket_thuc_thuc_te || "",
+      phan_tram_hoan_thanh: String(task.phan_tram_hoan_thanh ?? 0),
+    });
+    setProgressError("");
+  }
+
+  async function saveProgress(event) {
+    event.preventDefault();
+    setProgressError("");
+    if (
+      progressForm.ngay_bat_dau_thuc_te &&
+      progressForm.ngay_ket_thuc_thuc_te &&
+      progressForm.ngay_ket_thuc_thuc_te < progressForm.ngay_bat_dau_thuc_te
+    ) {
+      setProgressError("Ngày kết thúc thực tế không được trước ngày bắt đầu thực tế.");
+      return;
+    }
+    const completion = Number(progressForm.phan_tram_hoan_thanh);
+    if (!Number.isInteger(completion) || completion < 0 || completion > 100) {
+      setProgressError("Phần trăm hoàn thành phải là số nguyên từ 0 đến 100.");
+      return;
+    }
+
+    setSavingProgress(true);
+    try {
+      const response = await apiFetch(`${API}/cong-viec/${selectedTask.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ngay_bat_dau_thuc_te: progressForm.ngay_bat_dau_thuc_te || null,
+          ngay_ket_thuc_thuc_te: progressForm.ngay_ket_thuc_thuc_te || null,
+          phan_tram_hoan_thanh: completion,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Không thể cập nhật tiến độ.");
+      setTaskData(current => current.map(task => task.id === result.id ? result : task));
+      setSelectedTask(null);
+      setProgressForm(null);
+    } catch (error) {
+      setProgressError(error.message || "Không thể kết nối máy chủ.");
+    } finally {
+      setSavingProgress(false);
+    }
+  }
 
   return (
     <div className="app">
@@ -70,13 +140,22 @@ function App({ user, onLogout, onPasswordChanged }) {
 
         {page === "Tổng quan" ? <Dashboard data={data}/> :
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
-         page === "Tiến độ và đường găng" ? <SchedulePage user={user} /> :
-         page === "Công việc" ? <Tasks canUpdate={["admin", "manager", "engineer"].includes(user.role)}/> :
+         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
+        {selectedTask && progressForm && <ProgressFormModal
+          task={selectedTask}
+          form={progressForm}
+          setForm={setProgressForm}
+          error={progressError}
+          saving={savingProgress}
+          onSave={saveProgress}
+          onClose={() => setSelectedTask(null)}
+        />}
       </main>
     </div>
   );
@@ -234,73 +313,7 @@ function Projects({data, refresh, canManage}) {
   );
 }
 
-function Tasks({canUpdate}) {
-  const [data, setData] = useState([]);
-  const [selectedTask, setSelectedTask] = useState(null);
-  const [form, setForm] = useState(null);
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  async function loadTasks() {
-    const response = await apiFetch(`${API}/cong-viec`);
-    if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
-    setData(await response.json());
-  }
-
-  useEffect(() => {
-    loadTasks().catch(err => setError(err.message));
-  }, []);
-
-  function openProgressForm(task) {
-    setSelectedTask(task);
-    setForm({
-      ngay_bat_dau_thuc_te: task.ngay_bat_dau_thuc_te || "",
-      ngay_ket_thuc_thuc_te: task.ngay_ket_thuc_thuc_te || "",
-      phan_tram_hoan_thanh: String(task.phan_tram_hoan_thanh ?? 0),
-    });
-    setError("");
-  }
-
-  async function saveProgress(event) {
-    event.preventDefault();
-    setError("");
-    if (
-      form.ngay_bat_dau_thuc_te &&
-      form.ngay_ket_thuc_thuc_te &&
-      form.ngay_ket_thuc_thuc_te < form.ngay_bat_dau_thuc_te
-    ) {
-      setError("Ngày kết thúc thực tế không được trước ngày bắt đầu thực tế.");
-      return;
-    }
-    const completion = Number(form.phan_tram_hoan_thanh);
-    if (!Number.isInteger(completion) || completion < 0 || completion > 100) {
-      setError("Phần trăm hoàn thành phải là số nguyên từ 0 đến 100.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const response = await apiFetch(`${API}/cong-viec/${selectedTask.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ngay_bat_dau_thuc_te: form.ngay_bat_dau_thuc_te || null,
-          ngay_ket_thuc_thuc_te: form.ngay_ket_thuc_thuc_te || null,
-          phan_tram_hoan_thanh: completion,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "Không thể cập nhật tiến độ.");
-      setData(current => current.map(task => task.id === result.id ? result : task));
-      setSelectedTask(null);
-      setForm(null);
-    } catch (err) {
-      setError(err.message || "Không thể kết nối máy chủ.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
+function Tasks({data, canUpdate, onOpenProgress, error}) {
   return (
     <div className="content">
       <div className="page-title">
@@ -309,7 +322,7 @@ function Tasks({canUpdate}) {
           <p>Theo dõi kế hoạch và cập nhật riêng ngày, phần trăm hoàn thành thực tế.</p>
         </div>
       </div>
-      {error && !selectedTask && <div className="alert" role="alert">{error}</div>}
+      {error && <div className="alert" role="alert">{error}</div>}
       <section className="panel table-panel">
         <div className="table-wrap">
           <table>
@@ -329,7 +342,7 @@ function Tasks({canUpdate}) {
                   <div className="bar"><i style={{ width: `${task.phan_tram_hoan_thanh}%` }}/></div>
                   <span>{task.phan_tram_hoan_thanh}%</span>
                 </div></td>
-                {canUpdate && <td><button className="btn btn-primary" onClick={() => openProgressForm(task)}>Cập nhật</button></td>}
+                {canUpdate && <td><button className="btn btn-primary" onClick={() => onOpenProgress(task)}>Cập nhật</button></td>}
               </tr>)}
               {!data.length && <tr><td colSpan={canUpdate ? 9 : 8}>Chưa có công việc.</td></tr>}
             </tbody>
@@ -337,31 +350,36 @@ function Tasks({canUpdate}) {
         </div>
       </section>
 
-      {selectedTask && form && <div className="modal-bg" onMouseDown={event => {
-        if (event.target === event.currentTarget && !saving) setSelectedTask(null);
-      }}>
-        <form className="modal progress-modal" onSubmit={saveProgress} aria-labelledby="progress-modal-title">
-          <div className="modal-head">
-            <div><h2 id="progress-modal-title">Cập nhật tiến độ thực tế</h2><p>{selectedTask.ten}</p></div>
-            <button type="button" aria-label="Đóng" onClick={() => setSelectedTask(null)}>✕</button>
-          </div>
-          <p className="progress-plan-note">Kế hoạch: hạn {selectedTask.han || "chưa có"} · trạng thái {selectedTask.trang_thai}. Cập nhật này không thay đổi kế hoạch.</p>
-          <label>Ngày bắt đầu thực tế
-            <input type="date" value={form.ngay_bat_dau_thuc_te} onChange={event => setForm({ ...form, ngay_bat_dau_thuc_te: event.target.value })}/>
-          </label>
-          <label>Ngày kết thúc thực tế
-            <input type="date" min={form.ngay_bat_dau_thuc_te || undefined} value={form.ngay_ket_thuc_thuc_te} onChange={event => setForm({ ...form, ngay_ket_thuc_thuc_te: event.target.value })}/>
-          </label>
-          <label>Hoàn thành thực tế (%)
-            <input type="number" min="0" max="100" step="1" required value={form.phan_tram_hoan_thanh} onChange={event => setForm({ ...form, phan_tram_hoan_thanh: event.target.value })}/>
-          </label>
-          {error && <div className="alert" role="alert">{error}</div>}
-          <div className="progress-form-actions">
-            <button className="btn btn-primary" disabled={saving}>{saving ? "Đang lưu…" : "Lưu tiến độ"}</button>
-            <button className="btn" type="button" disabled={saving} onClick={() => setSelectedTask(null)}>Hủy</button>
-          </div>
-        </form>
-      </div>}
+    </div>
+  );
+}
+
+function ProgressFormModal({task, form, setForm, error, saving, onSave, onClose}) {
+  return (
+    <div className="modal-bg" onMouseDown={event => {
+      if (event.target === event.currentTarget && !saving) onClose();
+    }}>
+      <form className="modal progress-modal" onSubmit={onSave} aria-labelledby="progress-modal-title">
+        <div className="modal-head">
+          <div><h2 id="progress-modal-title">Cập nhật tiến độ thực tế</h2><p>{task.ten}</p></div>
+          <button type="button" aria-label="Đóng" disabled={saving} onClick={onClose}>✕</button>
+        </div>
+        <p className="progress-plan-note">Kế hoạch: hạn {task.han || "chưa có"} · trạng thái {task.trang_thai}. Cập nhật này không thay đổi kế hoạch.</p>
+        <label>Ngày bắt đầu thực tế
+          <input type="date" value={form.ngay_bat_dau_thuc_te} onChange={event => setForm({ ...form, ngay_bat_dau_thuc_te: event.target.value })}/>
+        </label>
+        <label>Ngày kết thúc thực tế
+          <input type="date" min={form.ngay_bat_dau_thuc_te || undefined} value={form.ngay_ket_thuc_thuc_te} onChange={event => setForm({ ...form, ngay_ket_thuc_thuc_te: event.target.value })}/>
+        </label>
+        <label>Hoàn thành thực tế (%)
+          <input type="number" min="0" max="100" step="1" required value={form.phan_tram_hoan_thanh} onChange={event => setForm({ ...form, phan_tram_hoan_thanh: event.target.value })}/>
+        </label>
+        {error && <div className="alert" role="alert">{error}</div>}
+        <div className="progress-form-actions">
+          <button className="btn btn-primary" disabled={saving}>{saving ? "Đang lưu…" : "Lưu tiến độ"}</button>
+          <button className="btn" type="button" disabled={saving} onClick={onClose}>Hủy</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -529,7 +547,17 @@ function Placeholder({title}) {
   );
 }
 
-function SchedulePage({ user }) {
+function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
+  const chartTasks = tasks
+    .filter(task => Number.isInteger(task.es) && Number.isInteger(task.ef))
+    .map(task => ({
+      ...task,
+      name: task.ten,
+      totalFloat: task.total_float,
+      isCritical: Boolean(task.is_critical),
+      actualTask: task,
+    }));
+
   return (
     <div className="content">
       <div className="page-title">
@@ -538,7 +566,12 @@ function SchedulePage({ user }) {
           <p>Sơ đồ Gantt, đường găng và độ trễ của từng công việc.</p>
         </div>
       </div>
-      <GanttChart data={scheduleData} />
+      {error && <div className="alert" role="alert">{error}</div>}
+      {canUpdate && <p className="progress-plan-note">Chọn thanh công việc để cập nhật tiến độ thực tế. Phần màu xanh thể hiện tỷ lệ đã hoàn thành.</p>}
+      <GanttChart
+        data={chartTasks}
+        onTaskSelect={canUpdate ? onOpenProgress : undefined}
+      />
     </div>
   );
 }
