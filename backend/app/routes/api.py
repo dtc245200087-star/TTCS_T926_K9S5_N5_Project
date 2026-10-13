@@ -195,3 +195,70 @@ def add_nhat_ky():
         user_id=request.current_user["id"],
     )
     return jsonify(entry), 201
+
+
+@api.get("/nhat-ky/thong-tin-ngay")
+@login_required
+def get_nhat_ky_thong_tin_ngay():
+    project = request.args.get("cong_trinh")
+    diary_date = request.args.get("ngay")
+    if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
+        return jsonify({"error": "invalid_project", "message": "Công trình không hợp lệ."}), 400
+    if not isinstance(diary_date, str):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký là bắt buộc."}), 400
+    try:
+        if date.fromisoformat(diary_date).isoformat() != diary_date:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
+    return jsonify(diaries.get_daily_summary(current_app.config["USER_DATABASE"], project, diary_date))
+
+
+@api.put("/nhat-ky/thong-tin-ngay")
+@roles_required("admin", "manager", "engineer")
+def update_nhat_ky_thong_tin_ngay():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
+    project = data.get("cong_trinh")
+    diary_date = data.get("ngay")
+    if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
+        return jsonify({"error": "invalid_project", "message": "Công trình không hợp lệ."}), 400
+    if not isinstance(diary_date, str):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký là bắt buộc."}), 400
+    try:
+        if date.fromisoformat(diary_date).isoformat() != diary_date:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
+
+    workforce_count = data.get("nhan_luc_so_nguoi")
+    if workforce_count is not None and (
+        isinstance(workforce_count, bool) or not isinstance(workforce_count, int) or not 0 <= workforce_count <= 10000
+    ):
+        return jsonify({"error": "invalid_workforce_count", "message": "Số nhân lực phải từ 0 đến 10000."}), 400
+    weather = data.get("thoi_tiet", "")
+    if not isinstance(weather, str) or weather not in ("", "Nắng", "Nhiều mây", "Mưa", "Khác"):
+        return jsonify({"error": "invalid_weather", "message": "Tình trạng thời tiết không hợp lệ."}), 400
+    text_fields = (
+        ("nhan_luc_ghi_chu", "Ghi chú nhân lực", 2000),
+        ("thiet_bi", "Thiết bị", 4000),
+        ("ghi_chu_thoi_tiet", "Ghi chú thời tiết", 2000),
+    )
+    for field, label, limit in text_fields:
+        value = data.get(field, "")
+        if not isinstance(value, str) or len(value.strip()) > limit:
+            return jsonify({"error": "invalid_text", "message": f"{label} tối đa {limit} ký tự."}), 400
+
+    summary = diaries.update_daily_summary(
+        current_app.config["USER_DATABASE"],
+        project=project,
+        diary_date=diary_date,
+        user_id=request.current_user["id"],
+        workforce_count=workforce_count,
+        workforce_notes=data.get("nhan_luc_ghi_chu", "").strip(),
+        equipment=data.get("thiet_bi", "").strip(),
+        weather=weather,
+        weather_notes=data.get("ghi_chu_thoi_tiet", "").strip(),
+    )
+    return jsonify(summary)

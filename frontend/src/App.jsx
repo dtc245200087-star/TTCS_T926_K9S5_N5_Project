@@ -407,6 +407,7 @@ function Diary({canWrite}) {
   const [diaryDate, setDiaryDate] = useState(today);
   const [taskFilter, setTaskFilter] = useState("");
   const [entries, setEntries] = useState([]);
+  const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
   const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -437,6 +438,18 @@ function Diary({canWrite}) {
   };
   useEffect(() => { loadEntries(); }, [project, diaryDate, taskFilter]);
 
+  useEffect(() => {
+    if (!project || !diaryDate) return;
+    const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
+    apiFetch(`${API}/nhat-ky/thong-tin-ngay?${query}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Không tải được thông tin trong ngày.");
+        setSummary(payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+      })
+      .catch(e => setError(e.message));
+  }, [project, diaryDate]);
+
   async function saveEntry(event) {
     event.preventDefault();
     setError("");
@@ -460,6 +473,26 @@ function Diary({canWrite}) {
     }
   }
 
+  async function saveSummary(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`${API}/nhat-ky/thong-tin-ngay`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...summary, cong_trinh: project, ngay: diaryDate,
+          nhan_luc_so_nguoi: summary.nhan_luc_so_nguoi === "" ? null : Number(summary.nhan_luc_so_nguoi)}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Không thể lưu thông tin trong ngày.");
+      setSummary(payload);
+      setNotice("Đã cập nhật nhân lực, thiết bị và thời tiết.");
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   return (
     <div className="content">
       <div className="page-title">
@@ -474,6 +507,17 @@ function Diary({canWrite}) {
           <label>Ngày<input type="date" value={diaryDate} onChange={e => setDiaryDate(e.target.value)}/></label>
           <label>Lọc theo hạng mục<select value={taskFilter} onChange={e => setTaskFilter(e.target.value)}><option value="">Tất cả hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
         </div>
+      </section>
+      <section className="panel daily-summary">
+        <div className="panel-head"><div><h2>Tình hình trong ngày</h2><p>Nhân lực, thiết bị sử dụng và thời tiết tại công trường.</p></div></div>
+        {canWrite ? <form onSubmit={saveSummary} className="summary-form">
+          <label>Số nhân lực<input type="number" min="0" max="10000" value={summary.nhan_luc_so_nguoi ?? ""} onChange={e => setSummary({...summary, nhan_luc_so_nguoi: e.target.value})} placeholder="Nhập số người"/></label>
+          <label>Ghi chú nhân lực<input maxLength={2000} value={summary.nhan_luc_ghi_chu || ""} onChange={e => setSummary({...summary, nhan_luc_ghi_chu: e.target.value})} placeholder="Ví dụ: 2 tổ thi công, 1 cán bộ giám sát"/></label>
+          <label>Thiết bị sử dụng<textarea rows={2} maxLength={4000} value={summary.thiet_bi || ""} onChange={e => setSummary({...summary, thiet_bi: e.target.value})} placeholder="Tên thiết bị và tình trạng sử dụng"/></label>
+          <label>Thời tiết<select value={summary.thoi_tiet || ""} onChange={e => setSummary({...summary, thoi_tiet: e.target.value})}><option value="">Chưa ghi nhận</option><option>Nắng</option><option>Nhiều mây</option><option>Mưa</option><option>Khác</option></select></label>
+          <label>Ghi chú thời tiết<input maxLength={2000} value={summary.ghi_chu_thoi_tiet || ""} onChange={e => setSummary({...summary, ghi_chu_thoi_tiet: e.target.value})} placeholder="Mô tả ảnh hưởng đến thi công"/></label>
+          <button className="primary">Lưu tình hình ngày</button>
+        </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
       </section>
       {canWrite && <form className="panel diary-form" onSubmit={saveEntry}>
         <div className="panel-head"><div><h2>Thêm mục nhật ký</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div></div>

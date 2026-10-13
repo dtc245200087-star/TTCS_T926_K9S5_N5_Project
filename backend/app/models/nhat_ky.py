@@ -20,6 +20,11 @@ def initialize_database(database_path):
                 cong_trinh TEXT NOT NULL,
                 ngay TEXT NOT NULL,
                 nguoi_lap_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                nhan_luc_so_nguoi INTEGER,
+                nhan_luc_ghi_chu TEXT,
+                thiet_bi TEXT,
+                thoi_tiet TEXT,
+                ghi_chu_thoi_tiet TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (cong_trinh, ngay)
             );
@@ -35,6 +40,16 @@ def initialize_database(database_path):
             CREATE INDEX IF NOT EXISTS nhat_ky_ngay_lookup ON nhat_ky_ngay(cong_trinh, ngay);
             CREATE INDEX IF NOT EXISTS nhat_ky_muc_work_item ON nhat_ky_muc(cong_viec_id);
         """)
+        day_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_ngay)").fetchall()}
+        for column, definition in (
+            ("nhan_luc_so_nguoi", "INTEGER"),
+            ("nhan_luc_ghi_chu", "TEXT"),
+            ("thiet_bi", "TEXT"),
+            ("thoi_tiet", "TEXT"),
+            ("ghi_chu_thoi_tiet", "TEXT"),
+        ):
+            if column not in day_columns:
+                db.execute(f"ALTER TABLE nhat_ky_ngay ADD COLUMN {column} {definition}")
 
         if db.execute("SELECT COUNT(*) FROM nhat_ky_muc").fetchone()[0] == 0:
             first_user = db.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()
@@ -90,6 +105,22 @@ def get_daily_summary(database_path, project, diary_date):
             (project, diary_date),
         ).fetchone()
         return dict(row) if row else None
+
+
+def update_daily_summary(database_path, *, project, diary_date, user_id, workforce_count,
+                         workforce_notes, equipment, weather, weather_notes):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
+        day_id = _get_or_create_day(db, project, diary_date, user_id)
+        db.execute(
+            """UPDATE nhat_ky_ngay
+               SET nhan_luc_so_nguoi = ?, nhan_luc_ghi_chu = ?, thiet_bi = ?,
+                   thoi_tiet = ?, ghi_chu_thoi_tiet = ?
+               WHERE id = ?""",
+            (workforce_count, workforce_notes, equipment, weather, weather_notes, day_id),
+        )
+        db.commit()
+    return get_daily_summary(database_path, project, diary_date)
 
 
 def create_entry(database_path, *, project, diary_date, task_id, entry_time, description, user_id):
