@@ -309,6 +309,9 @@ function AppMain() {
           <button className={tab === "tasks" ? "active" : ""} onClick={() => {setTab("tasks"); setOpen(false)}}>
             <ClipboardList size={19}/> Công việc
           </button>
+          <button className={tab === "dependencies" ? "active" : ""} onClick={() => {setTab("dependencies"); setOpen(false)}}>
+            <ClipboardList size={19}/> Quan hệ phụ thuộc (S-06)
+          </button>
           <button className={tab === "calendar" ? "active" : ""} onClick={() => {setTab("calendar"); setOpen(false)}}>
             <CalendarDays size={19}/> Lịch làm việc
           </button>
@@ -329,7 +332,7 @@ function AppMain() {
             {open ? <X /> : <Menu />}
           </button>
           <div>
-            <h1>{tab === "dashboard" ? "Tổng quan điều hành" : tab === "projects" ? "Quản lý công trình" : tab === "calendar" ? "Lịch làm việc dự án" : "Quản lý công việc"}</h1>
+            <h1>{tab === "dashboard" ? "Tổng quan điều hành" : tab === "projects" ? "Quản lý công trình" : tab === "calendar" ? "Lịch làm việc dự án" : tab === "dependencies" ? "Khai báo quan hệ phụ thuộc" : "Quản lý công việc"}</h1>
             <p>Theo dõi và điều hành tiến độ thi công</p>
           </div>
           <div className="header-user" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -354,6 +357,32 @@ function AppMain() {
         </header>
 
         {error && <div className="error">{error}</div>}
+
+        {tab === "dependencies" && (
+          <section className="s06-page">
+            <h2>S-06 — Khai báo quan hệ phụ thuộc giữa các công việc</h2>
+            <div className="s06-actions">
+              <button type="button" className="s06-status">▾ <span>In Progress</span></button>
+              <button type="button">◌ <span>Agents</span></button>
+              <button type="button">✦ <span>Improve Task</span></button>
+            </div>
+            <button type="button" className="s06-add" aria-label="Thêm công việc">+</button>
+            <section className="s06-description">
+              <div className="s06-description-title"><strong>Description</strong><span /></div>
+              <p>Mục tiêu: Cho phép xác định công việc nào phụ thuộc vào công việc nào.</p>
+              <ul>
+                <li>Tạo bảng dependencies.</li>
+                <li>Hỗ trợ 4 loại quan hệ giữa các công việc.</li>
+                <li>Cho phép nhập độ trễ, kể cả giá trị âm.</li>
+                <li>Không cho tạo quan hệ trùng cùng một cặp công việc.</li>
+                <li>Không cho một công việc phụ thuộc chính nó.</li>
+                <li>Bổ sung khu vực khai báo quan hệ vào form công việc.</li>
+                <li>Cho phép tìm công việc trước bằng tên khi chọn.</li>
+                <li>Hiển thị thông báo lỗi khi khai báo quan hệ bị trùng.</li>
+              </ul>
+            </section>
+          </section>
+        )}
 
         {tab === "dashboard" && (
           <>

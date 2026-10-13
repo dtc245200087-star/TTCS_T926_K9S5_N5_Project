@@ -100,6 +100,18 @@ td small { display:block; color:#8b96a5; margin-top:4px; }
 .holiday-form { display:grid; grid-template-columns:minmax(150px,1fr) minmax(200px,2fr) auto; gap:12px; align-items:end; margin:15px 0 19px; }
 .holiday-form label { display:grid; gap:7px; color:#435249; font-size:11px; font-weight:600; }
 .holiday-form input { width:100%; padding:9px 10px; border:1px solid #d7dfeb; border-radius:7px; }
+.s06-page { min-height:calc(100vh - 145px); margin:-12px -16px; padding:18px 16px 40px; background:#f2f4f7; color:#111827; font-family:"Segoe UI",Arial,sans-serif; }
+.s06-page h2 { max-width:900px; margin:0; color:#0f172a; font-size:36px; line-height:1.15; letter-spacing:-.04em; }
+.s06-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:26px; }
+.s06-actions button { display:inline-flex; align-items:center; justify-content:center; gap:10px; min-height:48px; padding:12px 18px; border:1px solid #d8dde6; border-radius:14px; background:#f5f7fa; color:#1f2937; font-size:15px; font-weight:600; line-height:1; }
+.s06-actions button.s06-status { min-width:186px; justify-content:space-between; border-color:#c5d9ee; background:#dfeaf7; color:#1d3557; }
+.s06-add { display:block; width:42px; height:42px; margin:22px 0 12px 8px; padding:0; border:0; background:transparent; color:#111827; font-size:42px; font-weight:300; line-height:1; }
+.s06-description-title { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.s06-description-title strong { color:#111827; font-size:17px; }
+.s06-description-title span { flex:1; height:1px; min-width:80px; background:#dfe3e8; }
+.s06-description p { margin:0 0 12px; color:#111827; font-size:18px; font-weight:500; line-height:1.7; }
+.s06-description ul { margin:0; padding-left:22px; color:#1f2937; font-size:18px; line-height:1.8; }
+.s06-description li { margin-bottom:2px; }
 @media (max-width:760px) { .holiday-form { grid-template-columns:1fr; } .schedule-overview .panel-title { align-items:flex-start; flex-direction:column; } }
 
 @media (max-width: 900px) {
@@ -116,4 +128,6 @@ td small { display:block; color:#8b96a5; margin-top:4px; }
 @media (max-width: 520px) {
   .stats { grid-template-columns:1fr; }
   .main { padding:15px; }
+  .s06-page h2 { font-size:30px; }
+  .s06-description ul { font-size:16px; }
 }
