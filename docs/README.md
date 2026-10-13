@@ -18,7 +18,7 @@
 3. Chạy `docker compose up --build`.
 4. Mở `http://localhost:5173` và đăng nhập bằng tên trong `INITIAL_ADMIN_USERNAME` cùng mật khẩu vừa đặt.
 
-SQLite nằm trong volume `backend_data`, nên tài khoản không mất khi dựng lại container. Biến `INITIAL_ADMIN_PASSWORD` chỉ dùng khi cơ sở dữ liệu chưa có tài khoản; đổi biến này sau đó không đổi mật khẩu đã lưu. Hãy dùng HTTPS và đặt `COOKIE_SECURE=true` khi triển khai qua HTTPS.
+SQLite nằm trong volume `backend_data`, nên tài khoản và nhật ký thi công không mất khi dựng lại container. Biến `INITIAL_ADMIN_PASSWORD` chỉ dùng khi cơ sở dữ liệu chưa có tài khoản; đổi biến này sau đó không đổi mật khẩu đã lưu. Hãy dùng HTTPS và đặt `COOKIE_SECURE=true` khi triển khai qua HTTPS.
 
 ## Chạy trực tiếp trên Windows PowerShell
 
@@ -58,3 +58,14 @@ Mở `http://localhost:5173`. Cơ sở dữ liệu tài khoản cục bộ đư�
 - `GET /api/auth/users`, `POST /api/auth/users`, `PATCH /api/auth/users/<id>` — chỉ quản trị viên.
 
 API trả `401` nếu chưa đăng nhập, `403` nếu tài khoản không đủ quyền và yêu cầu `X-CSRF-Token` trên mọi yêu cầu thay đổi dữ liệu. Cookie phiên là HttpOnly, SameSite=Lax; mật khẩu được băm trước khi ghi SQLite. Quản trị viên cuối cùng không thể bị khóa/hạ quyền, và người dùng không thể tự khóa hoặc tự hạ quyền.
+
+## Khóa sổ nhật ký theo ngày
+
+- `GET /api/nhat-ky` — xem nhật ký và trạng thái khóa của từng ngày.
+- `POST /api/nhat-ky` — ghi nhật ký; ngày khóa sổ trả về `423`.
+- `PATCH /api/nhat-ky/<id>` — sửa công trình/nội dung; ngày khóa sổ trả về `423`.
+- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/lock` — khóa sổ; yêu cầu vai trò `engineer`, `manager` hoặc `admin`.
+- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/unlock` — mở khóa; chỉ `manager` hoặc `admin`, bắt buộc gửi `{"ly_do":"..."}` (tối đa 500 ký tự).
+- `GET /api/nhat-ky/audit?ngay=<YYYY-MM-DD>` — xem lịch sử khóa/mở khóa; chỉ `manager` hoặc `admin`.
+
+Trạng thái khóa được kiểm tra trong giao dịch SQLite ở máy chủ khi ghi hoặc sửa, nên ẩn nút trên giao diện không phải là biện pháp bảo vệ duy nhất. Lý do, người thực hiện và thời điểm mở khóa được lưu trong bảng lịch sử.

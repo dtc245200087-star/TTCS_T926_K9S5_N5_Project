@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
   Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle,
-  Menu, X, TrendingUp
+  Menu, X, LockKeyhole, UnlockKeyhole, Pencil, History, TrendingUp
 } from "lucide-react";
 import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
@@ -74,7 +74,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công việc" ? <Tasks data={data?.cong_viec_hom_nay || []}/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
-         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
+         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} canUnlock={["admin", "manager"].includes(user.role)}/> :
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
       </main>
@@ -264,17 +264,128 @@ function Materials() {
   );
 }
 
-function Diary({canWrite}) {
+function Diary({canWrite, canUnlock}) {
+  const [entries, setEntries] = useState([]);
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ ngay: new Date().toLocaleDateString("en-CA"), cong_trinh: "", noi_dung: "" });
+  const [unlockDay, setUnlockDay] = useState("");
+  const [reason, setReason] = useState("");
+  const [auditDay, setAuditDay] = useState("");
+  const [audit, setAudit] = useState([]);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function loadEntries() {
+    const response = await apiFetch(`${API}/nhat-ky`);
+    if (response.ok) setEntries(await response.json());
+  }
+  useEffect(() => { loadEntries().catch(() => setError("Không thể tải nhật ký.")); }, []);
+
+  function startAdd() {
+    setEditing(null);
+    setForm({ ngay: new Date().toLocaleDateString("en-CA"), cong_trinh: "", noi_dung: "" });
+    setError(""); setShow(true);
+  }
+
+  function startEdit(entry) {
+    setEditing(entry);
+    setForm({ ngay: entry.ngay, cong_trinh: entry.cong_trinh, noi_dung: entry.noi_dung });
+    setError(""); setShow(true);
+  }
+
+  async function saveEntry(event) {
+    event.preventDefault(); setError(""); setMessage("");
+    const response = await apiFetch(editing ? `${API}/nhat-ky/${editing.id}` : `${API}/nhat-ky`, {
+      method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(editing ? { cong_trinh: form.cong_trinh, noi_dung: form.noi_dung } : form),
+    });
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không thể lưu nhật ký."); return; }
+    setShow(false); setMessage(editing ? "Đã cập nhật nhật ký." : "Đã ghi nhật ký."); await loadEntries();
+  }
+
+  async function lockDay(day) {
+    if (!window.confirm(`Khóa sổ nhật ký ngày ${day}? Sau khi khóa, nhật ký ngày này sẽ không thể chỉnh sửa.`)) return;
+    setError(""); setMessage("");
+    const response = await apiFetch(`${API}/nhat-ky/ngay/${day}/lock`, { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không thể khóa nhật ký."); return; }
+    setMessage(`Đã khóa sổ nhật ký ngày ${day}.`); await loadEntries();
+  }
+
+  async function unlock(day) {
+    setError(""); setMessage("");
+    const response = await apiFetch(`${API}/nhat-ky/ngay/${day}/unlock`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ly_do: reason }),
+    });
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không thể mở khóa nhật ký."); return; }
+    setUnlockDay(""); setReason(""); setMessage(`Đã mở khóa nhật ký ngày ${day}.`); await loadEntries();
+  }
+
+  async function openAudit(day) {
+    const response = await apiFetch(`${API}/nhat-ky/audit?ngay=${encodeURIComponent(day)}`);
+    if (!response.ok) return;
+    setAudit(await response.json()); setAuditDay(day);
+  }
+
+  const groups = Object.values(entries.reduce((result, entry) => {
+    (result[entry.ngay] ||= { day: entry.ngay, locked: entry.is_locked, lockedBy: entry.khoa_boi, lockedAt: entry.khoa_luc, entries: [] }).entries.push(entry);
+    return result;
+  }, {}));
+
   return (
     <div className="content">
       <div className="page-title">
         <div>
           <h1>Nhật ký thi công</h1>
-          <p>Ghi nhận hoạt động tại công trường theo từng ngày.</p>
+          <p>Ghi nhận và khóa sổ nhật ký theo ngày sau khi xác nhận.</p>
         </div>
-        {canWrite && <button className="primary"><Plus size={18}/> Ghi nhật ký</button>}
+        {canWrite && <button className="primary" onClick={startAdd}><Plus size={18}/> Ghi nhật ký</button>}
       </div>
-      <SimpleTable title="" endpoint="/nhat-ky" columns={["ngay","cong_trinh","noi_dung","nguoi_lap"]} headers={["Ngày","Công trình","Nội dung","Người lập"]}/>
+      {message && <div className="success" role="status">{message}</div>}{error && <div className="alert" role="alert">{error}</div>}
+      <section className="panel table-panel diary-panel">
+        <div className="table-wrap"><table>
+          <thead><tr><th>Công trình</th><th>Nội dung</th><th>Người lập</th><th>Thao tác</th></tr></thead>
+          <tbody>{groups.length === 0 ? <tr><td colSpan="4" className="diary-empty">Chưa có nhật ký.</td></tr> : groups.map(group => <React.Fragment key={group.day}>
+            <tr className={group.locked ? "diary-day locked" : "diary-day"}>
+              <td colSpan="4"><div className="diary-day-head">
+                <div className="diary-date"><CalendarDays size={15}/><b>{group.day}</b>{group.locked ? <span className="lock-badge"><LockKeyhole size={13}/> Đã khóa</span> : <span className="open-badge">Đang mở</span>}
+                  {group.locked && <small>Khóa bởi {group.lockedBy}</small>}
+                </div>
+                <div className="diary-actions">
+                  {group.locked ? canUnlock && <button className="text-btn" onClick={() => { setUnlockDay(group.day); setReason(""); setError(""); }}><UnlockKeyhole size={14}/> Mở khóa</button> : canWrite && <button className="text-btn" onClick={() => lockDay(group.day)}><LockKeyhole size={14}/> Khóa ngày</button>}
+                  {canUnlock && <button className="text-btn" onClick={() => openAudit(group.day)}><History size={14}/> Lịch sử</button>}
+                </div>
+              </div></td>
+            </tr>
+            {group.entries.map(entry => <tr key={entry.id}>
+              <td>{entry.cong_trinh}</td><td className="diary-content">{entry.noi_dung}</td><td>{entry.nguoi_lap}</td>
+              <td>{canWrite && <button className="row-action" disabled={group.locked} title={group.locked ? "Ngày đã khóa" : "Sửa nhật ký"} onClick={() => startEdit(entry)}><Pencil size={15}/></button>}</td>
+            </tr>)}
+          </React.Fragment>)}</tbody>
+        </table></div>
+      </section>
+      {show && <div className="modal-bg"><form className="modal" onSubmit={saveEntry}>
+        <div className="modal-head"><h2>{editing ? "Sửa nhật ký" : "Ghi nhật ký"}</h2><button type="button" onClick={() => setShow(false)}>✕</button></div>
+        {!editing && <label>Ngày nhật ký<input type="date" required value={form.ngay} onChange={e => setForm({ ...form, ngay: e.target.value })}/></label>}
+        <label>Công trình<input required maxLength="255" value={form.cong_trinh} onChange={e => setForm({ ...form, cong_trinh: e.target.value })}/></label>
+        <label>Nội dung<textarea required maxLength="10000" rows="5" value={form.noi_dung} onChange={e => setForm({ ...form, noi_dung: e.target.value })}/></label>
+        {error && <div className="alert" role="alert">{error}</div>}
+        <div className="modal-actions"><button className="btn btn-primary">Lưu nhật ký</button><button type="button" className="btn" onClick={() => setShow(false)}>Hủy</button></div>
+      </form></div>}
+      {unlockDay && <div className="modal-bg"><form className="modal" onSubmit={e => { e.preventDefault(); unlock(unlockDay); }}>
+        <div className="modal-head"><h2>Mở khóa nhật ký</h2><button type="button" onClick={() => setUnlockDay("")}>✕</button></div>
+        <p className="modal-note">Nhật ký ngày {unlockDay} sẽ cho phép chỉnh sửa trở lại.</p>
+        <label>Lý do mở khóa<input required maxLength="500" value={reason} onChange={e => setReason(e.target.value)} placeholder="Nhập lý do mở khóa"/></label>
+        {error && <div className="alert" role="alert">{error}</div>}
+        <div className="modal-actions"><button className="btn btn-primary">Mở khóa</button><button type="button" className="btn" onClick={() => setUnlockDay("")}>Hủy</button></div>
+      </form></div>}
+      {auditDay && <div className="modal-bg"><div className="modal audit-modal">
+        <div className="modal-head"><h2>Lịch sử nhật ký {auditDay}</h2><button onClick={() => setAuditDay("")}>✕</button></div>
+        {audit.length ? <div className="audit-list">{audit.map(item => <div className="audit-row" key={item.id}><b>{item.hanh_dong === "lock" ? "Khóa sổ" : "Mở khóa"}</b><span>{item.thuc_hien_boi} · {new Date(item.thuc_hien_luc).toLocaleString("vi-VN")}</span>{item.ly_do && <small>Lý do: {item.ly_do}</small>}</div>)}</div> : <p className="modal-note">Chưa có thao tác khóa/mở khóa.</p>}
+      </div></div>}
     </div>
   );
 }

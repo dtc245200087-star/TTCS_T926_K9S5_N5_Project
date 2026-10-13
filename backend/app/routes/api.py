@@ -1,6 +1,8 @@
-from flask import Blueprint, jsonify, request
-from datetime import datetime
+from flask import Blueprint, current_app, jsonify, request
+from datetime import date, datetime
+import re
 from .auth import login_required, roles_required
+from ..models import nhat_ky as diary
 
 api = Blueprint("api", __name__)
 
@@ -29,10 +31,25 @@ vat_tu = [
     {"id": 3, "ten": "Cát xây dựng", "don_vi": "m³", "ton_kho": 24, "muc_toi_thieu": 40},
 ]
 
-nhat_ky = [
-    {"id": 1, "ngay": "2026-10-01", "cong_trinh": "Khu đô thị Bắc Sông Cầu", "noi_dung": "Thi công móng khu A, thời tiết thuận lợi.", "nguoi_lap": "Nguyễn Văn An"},
-    {"id": 2, "ngay": "2026-09-30", "cong_trinh": "Tòa nhà văn phòng A1", "noi_dung": "Hoàn thành lắp đặt cốt thép tầng 3.", "nguoi_lap": "Trần Minh Đức"},
-]
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def valid_day(value):
+    if not isinstance(value, str) or not DATE_PATTERN.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+def diary_database():
+    return current_app.config["USER_DATABASE"]
+
+
+def diary_locked_response():
+    return jsonify({"error": "diary_day_locked", "message": "Nhật ký ngày này đã khóa sổ. Hãy yêu cầu quản lý mở khóa trước khi sửa."}), 423
 
 @api.get("/dashboard")
 @login_required
@@ -84,18 +101,81 @@ def get_vat_tu():
 @api.get("/nhat-ky")
 @login_required
 def get_nhat_ky():
-    return jsonify(nhat_ky)
+    return jsonify(diary.list_entries(diary_database()))
 
 @api.post("/nhat-ky")
 @roles_required("admin", "manager", "engineer")
 def add_nhat_ky():
     data = request.get_json() or {}
-    item = {
-        "id": max([x["id"] for x in nhat_ky], default=0) + 1,
-        "ngay": datetime.now().strftime("%Y-%m-%d"),
-        "cong_trinh": data.get("cong_trinh", ""),
-        "noi_dung": data.get("noi_dung", ""),
-        "nguoi_lap": data.get("nguoi_lap", "Quản trị viên")
-    }
-    nhat_ky.append(item)
-    return jsonify(item), 201
+    day = data.get("ngay", datetime.now().strftime("%Y-%m-%d"))
+    project = data.get("cong_trinh")
+    content = data.get("noi_dung")
+    if not valid_day(day):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký không hợp lệ."}), 400
+    if not isinstance(project, str) or not project.strip() or len(project.strip()) > 255:
+        return jsonify({"error": "invalid_project", "message": "Tên công trình là bắt buộc và tối đa 255 ký tự."}), 400
+    if not isinstance(content, str) or not content.strip() or len(content.strip()) > 10000:
+        return jsonify({"error": "invalid_content", "message": "Nội dung nhật ký là bắt buộc và tối đa 10.000 ký tự."}), 400
+    user = request.current_user
+    entry_id = diary.add_entry(
+        diary_database(), day=day, project=project.strip(), content=content.strip(),
+        author=user["full_name"], author_id=user["id"],
+    )
+    if entry_id is None:
+        return diary_locked_response()
+    return jsonify(next(item for item in diary.list_entries(diary_database()) if item["id"] == entry_id)), 201
+
+
+@api.patch("/nhat-ky/<int:entry_id>")
+@roles_required("admin", "manager", "engineer")
+def edit_nhat_ky(entry_id):
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
+    project = data.get("cong_trinh")
+    content = data.get("noi_dung")
+    if not isinstance(project, str) or not project.strip() or len(project.strip()) > 255:
+        return jsonify({"error": "invalid_project", "message": "Tên công trình là bắt buộc và tối đa 255 ký tự."}), 400
+    if not isinstance(content, str) or not content.strip() or len(content.strip()) > 10000:
+        return jsonify({"error": "invalid_content", "message": "Nội dung nhật ký là bắt buộc và tối đa 10.000 ký tự."}), 400
+    result = diary.update_entry(diary_database(), entry_id, project=project.strip(), content=content.strip())
+    if result == "not_found":
+        return jsonify({"error": "not_found", "message": "Không tìm thấy nhật ký."}), 404
+    if result == "locked":
+        return diary_locked_response()
+    return jsonify(next(item for item in diary.list_entries(diary_database()) if item["id"] == entry_id))
+
+
+@api.post("/nhat-ky/ngay/<day>/lock")
+@roles_required("admin", "manager", "engineer")
+def lock_nhat_ky_day(day):
+    if not valid_day(day):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký không hợp lệ."}), 400
+    user = request.current_user
+    if not diary.lock_day(diary_database(), day, user["id"], user["full_name"]):
+        return jsonify({"error": "already_locked", "message": "Nhật ký ngày này đã được khóa."}), 409
+    return jsonify({"ngay": day, "is_locked": True}), 200
+
+
+@api.post("/nhat-ky/ngay/<day>/unlock")
+@roles_required("admin", "manager")
+def unlock_nhat_ky_day(day):
+    if not valid_day(day):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký không hợp lệ."}), 400
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
+    reason = data.get("ly_do")
+    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 500:
+        return jsonify({"error": "invalid_reason", "message": "Lý do mở khóa là bắt buộc và tối đa 500 ký tự."}), 400
+    user = request.current_user
+    if not diary.unlock_day(diary_database(), day, user["id"], user["full_name"], reason.strip()):
+        return jsonify({"error": "not_locked", "message": "Nhật ký ngày này hiện chưa khóa."}), 409
+    return jsonify({"ngay": day, "is_locked": False}), 200
+
+
+@api.get("/nhat-ky/audit")
+@roles_required("admin", "manager")
+def get_nhat_ky_audit():
+    day = request.args.get("ngay")
+    if day and not valid_day(day):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký không hợp lệ."}), 400
+    return jsonify(diary.list_audit(diary_database(), day))
