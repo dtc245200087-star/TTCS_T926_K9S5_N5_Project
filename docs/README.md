@@ -67,3 +67,7 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 - `GET /api/cong-viec` — trả các trường tiến độ thực tế và kế hoạch Gantt để cả hai mục dùng chung dữ liệu.
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
+
+## Benchmark S-13 (T-29)
+
+Trên Windows 11 với Chrome, biểu đồ SVG hiển thị 500 thanh trong **0,101 giây**. Khi cuộn ngang, FPS đo được là **22,8 FPS ở giữa biểu đồ** và **1,2 FPS ở đoạn cuối danh sách**, cho thấy cuộn chưa mượt ở quy mô 500 công việc dù thời gian render ban đầu nhanh. Đây là trường hợp cực đoan; với khoảng 20–50 công việc dự kiến trong dự án, tiếp tục giữ SVG. Tối ưu bằng Canvas hoặc virtualize có thể xem xét trong task mở rộng sau.
