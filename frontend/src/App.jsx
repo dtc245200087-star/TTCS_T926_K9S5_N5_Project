@@ -400,16 +400,98 @@ function Materials() {
 }
 
 function Diary({canWrite}) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [project, setProject] = useState("");
+  const [diaryDate, setDiaryDate] = useState(today);
+  const [taskFilter, setTaskFilter] = useState("");
+  const [entries, setEntries] = useState([]);
+  const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    Promise.all([apiFetch(`${API}/cong-trinh`).then(r => r.json()), apiFetch(`${API}/cong-viec`).then(r => r.json())])
+      .then(([projectList, taskList]) => {
+        setProjects(projectList);
+        setTasks(taskList);
+        setProject(projectList[0]?.ten || "");
+      })
+      .catch(() => setError("Không tải được danh sách công trình và hạng mục."));
+  }, []);
+
+  const projectTasks = tasks.filter(task => task.cong_trinh === project);
+  const loadEntries = () => {
+    if (!project || !diaryDate) return;
+    const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
+    if (taskFilter) query.set("cong_viec_id", taskFilter);
+    apiFetch(`${API}/nhat-ky?${query}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Không tải được nhật ký.");
+        setEntries(payload);
+      })
+      .catch(e => setError(e.message));
+  };
+  useEffect(() => { loadEntries(); }, [project, diaryDate, taskFilter]);
+
+  async function saveEntry(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setSaving(true);
+    try {
+      const response = await apiFetch(`${API}/nhat-ky`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...form, cong_trinh: project, ngay: diaryDate, cong_viec_id: Number(form.cong_viec_id)}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
+      setForm(current => ({...current, noi_dung: ""}));
+      setNotice("Đã thêm mục nhật ký.");
+      loadEntries();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="content">
       <div className="page-title">
         <div>
           <h1>Nhật ký thi công</h1>
-          <p>Ghi nhận hoạt động tại công trường theo từng ngày.</p>
+          <p>Ghi nhận hoạt động theo công trình, ngày và hạng mục công việc.</p>
         </div>
-        {canWrite && <button className="primary"><Plus size={18}/> Ghi nhật ký</button>}
       </div>
-      <SimpleTable title="" endpoint="/nhat-ky" columns={["ngay","cong_trinh","noi_dung","nguoi_lap"]} headers={["Ngày","Công trình","Nội dung","Người lập"]}/>
+      <section className="panel diary-panel">
+        <div className="diary-filters">
+          <label>Công trình<select value={project} onChange={e => setProject(e.target.value)}>{projects.map(item => <option key={item.id} value={item.ten}>{item.ten}</option>)}</select></label>
+          <label>Ngày<input type="date" value={diaryDate} onChange={e => setDiaryDate(e.target.value)}/></label>
+          <label>Lọc theo hạng mục<select value={taskFilter} onChange={e => setTaskFilter(e.target.value)}><option value="">Tất cả hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
+        </div>
+      </section>
+      {canWrite && <form className="panel diary-form" onSubmit={saveEntry}>
+        <div className="panel-head"><div><h2>Thêm mục nhật ký</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div></div>
+        <div className="diary-form-fields">
+          <label>Hạng mục<select required value={form.cong_viec_id} onChange={e => setForm({...form, cong_viec_id: e.target.value})}><option value="">Chọn hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
+          <label>Thời gian<input required type="time" value={form.gio} onChange={e => setForm({...form, gio: e.target.value})}/></label>
+          <label className="diary-description">Mô tả công việc<textarea required maxLength={5000} rows={3} value={form.noi_dung} onChange={e => setForm({...form, noi_dung: e.target.value})} placeholder="Mô tả công việc đã thực hiện..."/></label>
+          <button className="primary" disabled={saving || !projectTasks.length}>{saving ? "Đang lưu..." : "Lưu nhật ký"}</button>
+        </div>
+      </form>}
+      {error && <div className="alert" role="alert">{error}</div>}
+      {notice && <div className="success" role="status">{notice}</div>}
+      <section className="panel diary-list">
+        <div className="panel-head"><div><h2>Nhật ký ngày {diaryDate}</h2><p>{project || "Đang tải công trình"}</p></div></div>
+        {entries.length ? <div className="diary-entries">{entries.map(entry => <article className="diary-entry" key={entry.id}>
+          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small></div>
+        </article>)}</div> : <p className="diary-empty">Chưa có mục nhật ký cho bộ lọc này.</p>}
+      </section>
     </div>
   );
 }

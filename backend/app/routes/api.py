@@ -3,6 +3,7 @@ from datetime import date, datetime
 from flask import Blueprint, current_app, jsonify, request
 
 from ..models import cong_viec as tasks
+from ..models import nhat_ky as diaries
 from .auth import login_required, roles_required
 
 api = Blueprint("api", __name__)
@@ -24,11 +25,6 @@ vat_tu = [
     {"id": 1, "ten": "Xi măng", "don_vi": "Tấn", "ton_kho": 125, "muc_toi_thieu": 50},
     {"id": 2, "ten": "Thép xây dựng", "don_vi": "Tấn", "ton_kho": 68, "muc_toi_thieu": 30},
     {"id": 3, "ten": "Cát xây dựng", "don_vi": "m³", "ton_kho": 24, "muc_toi_thieu": 40},
-]
-
-nhat_ky = [
-    {"id": 1, "ngay": "2026-10-01", "cong_trinh": "Khu đô thị Bắc Sông Cầu", "noi_dung": "Thi công móng khu A, thời tiết thuận lợi.", "nguoi_lap": "Nguyễn Văn An"},
-    {"id": 2, "ngay": "2026-09-30", "cong_trinh": "Tòa nhà văn phòng A1", "noi_dung": "Hoàn thành lắp đặt cốt thép tầng 3.", "nguoi_lap": "Trần Minh Đức"},
 ]
 
 @api.get("/dashboard")
@@ -127,18 +123,75 @@ def get_vat_tu():
 @api.get("/nhat-ky")
 @login_required
 def get_nhat_ky():
-    return jsonify(nhat_ky)
+    diary_date = request.args.get("ngay")
+    project = request.args.get("cong_trinh")
+    work_item_id = request.args.get("cong_viec_id")
+    if diary_date:
+        try:
+            if date.fromisoformat(diary_date).isoformat() != diary_date:
+                raise ValueError
+        except ValueError:
+            return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
+    if project and project not in {item["ten"] for item in cong_trinh}:
+        return jsonify({"error": "invalid_project", "message": "Công trình không hợp lệ."}), 400
+    if work_item_id:
+        if not work_item_id.isdigit():
+            return jsonify({"error": "invalid_work_item", "message": "Hạng mục không hợp lệ."}), 400
+        work_item_id = int(work_item_id)
+    else:
+        work_item_id = None
+
+    return jsonify(diaries.list_entries(
+        current_app.config["USER_DATABASE"],
+        project=project,
+        diary_date=diary_date,
+        work_item_id=work_item_id,
+    ))
 
 @api.post("/nhat-ky")
 @roles_required("admin", "manager", "engineer")
 def add_nhat_ky():
-    data = request.get_json() or {}
-    item = {
-        "id": max([x["id"] for x in nhat_ky], default=0) + 1,
-        "ngay": datetime.now().strftime("%Y-%m-%d"),
-        "cong_trinh": data.get("cong_trinh", ""),
-        "noi_dung": data.get("noi_dung", ""),
-        "nguoi_lap": data.get("nguoi_lap", "Quản trị viên")
-    }
-    nhat_ky.append(item)
-    return jsonify(item), 201
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
+
+    project = data.get("cong_trinh")
+    diary_date = data.get("ngay")
+    work_item_id = data.get("cong_viec_id")
+    entry_time = data.get("gio")
+    description = data.get("noi_dung")
+    if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
+        return jsonify({"error": "invalid_project", "message": "Hãy chọn công trình hợp lệ."}), 400
+    if not isinstance(diary_date, str):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký là bắt buộc."}), 400
+    try:
+        if date.fromisoformat(diary_date).isoformat() != diary_date:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
+    if isinstance(work_item_id, bool) or not str(work_item_id).isdigit():
+        return jsonify({"error": "invalid_work_item", "message": "Mỗi mục nhật ký phải gắn với một hạng mục."}), 400
+    work_item_id = int(work_item_id)
+    task = next((item for item in tasks.list_tasks(current_app.config["USER_DATABASE"]) if item["id"] == work_item_id), None)
+    if not task or task.get("cong_trinh") != project:
+        return jsonify({"error": "invalid_work_item", "message": "Hạng mục không thuộc công trình đã chọn."}), 400
+    if not isinstance(entry_time, str):
+        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận là bắt buộc."}), 400
+    try:
+        if datetime.strptime(entry_time, "%H:%M").strftime("%H:%M") != entry_time:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận phải theo định dạng HH:MM."}), 400
+    if not isinstance(description, str) or not description.strip() or len(description.strip()) > 5000:
+        return jsonify({"error": "invalid_description", "message": "Nội dung công việc là bắt buộc và tối đa 5000 ký tự."}), 400
+
+    entry = diaries.create_entry(
+        current_app.config["USER_DATABASE"],
+        project=project,
+        diary_date=diary_date,
+        task_id=work_item_id,
+        entry_time=entry_time,
+        description=description.strip(),
+        user_id=request.current_user["id"],
+    )
+    return jsonify(entry), 201

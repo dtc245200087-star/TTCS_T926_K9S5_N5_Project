@@ -7,6 +7,7 @@ from flask_cors import CORS
 
 from .models import user as users
 from .models import cong_viec as tasks
+from .models import nhat_ky as diaries
 from .routes.api import api
 from .routes.auth import auth
 
@@ -49,6 +50,7 @@ def create_app(test_config=None):
         users.create_user(
             str(db_path), username, os.environ.get("INITIAL_ADMIN_FULL_NAME", "Quản trị viên"), password, "admin"
         )
+    diaries.initialize_database(str(db_path))
 
     CORS(
         app,
