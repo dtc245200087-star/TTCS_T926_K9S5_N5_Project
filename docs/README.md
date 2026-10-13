@@ -67,3 +67,7 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 - `GET /api/cong-viec` — trả các trường tiến độ thực tế và kế hoạch Gantt để cả hai mục dùng chung dữ liệu.
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
+
+## Bảng kết quả tiến độ
+
+Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.

@@ -69,6 +69,22 @@ def get_cong_viec():
     return jsonify(tasks.list_tasks(current_app.config["USER_DATABASE"]))
 
 
+@api.get("/schedule-results")
+@login_required
+def get_schedule_results():
+    database = current_app.config["USER_DATABASE"]
+    schedule_results, has_cycle = tasks.get_schedule_results(database)
+    return jsonify({
+        "tasks": tasks.list_tasks(database),
+        "schedule_results": [] if has_cycle else schedule_results,
+        "has_cycle": has_cycle,
+        "message": (
+            "Dữ liệu công việc có vòng lặp phụ thuộc, không thể tính tiến độ."
+            if has_cycle else ""
+        ),
+    })
+
+
 @api.patch("/cong-viec/<int:task_id>")
 @roles_required("admin", "manager", "engineer")
 def update_cong_viec_progress(task_id):
