@@ -7,6 +7,7 @@ from flask_cors import CORS
 
 from .models import user as users
 from .models import cong_viec as tasks
+from .models import milestone as milestone_data
 from .routes.api import api
 from .routes.auth import auth
 
@@ -36,6 +37,7 @@ def create_app(test_config=None):
     db_path.parent.mkdir(parents=True, exist_ok=True)
     users.initialize_database(str(db_path))
     tasks.initialize_database(str(db_path))
+    milestone_data.initialize_database(str(db_path))
     if users.count_users(str(db_path)) == 0:
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
         password = os.environ.get("INITIAL_ADMIN_PASSWORD")
@@ -55,7 +57,7 @@ def create_app(test_config=None):
         resources={r"/api/*": {"origins": app.config["FRONTEND_ORIGINS"]}},
         supports_credentials=True,
         allow_headers=["Content-Type", "X-CSRF-Token"],
-        methods=["GET", "POST", "PATCH", "OPTIONS"],
+        methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     )
 
     @app.before_request

@@ -67,3 +67,11 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 - `GET /api/cong-viec` — trả các trường tiến độ thực tế và kế hoạch Gantt để cả hai mục dùng chung dữ liệu.
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
+
+## Hạng mục và mốc bàn giao
+
+Mục **Hạng mục** cho phép quản trị viên và quản lý công trình tạo cây hạng mục, gán công việc, và khai báo chuỗi phụ thuộc giữa các công việc. Người có quyền cập nhật tiến độ cũng có thể chọn hạng mục trong form **Cập nhật tiến độ thực tế**; lựa chọn này được lưu vào `cong_viec.category_id`. Khi chuyển công việc sang hạng mục khác, các liên kết phụ thuộc cũ của công việc đó được xóa để tránh giữ lại chuỗi không còn cùng hạng mục.
+
+Đặt ngày bắt đầu kế hoạch cho mỗi hạng mục. Các giá trị `ES`/`EF` hiện được lưu theo số ngày tính từ mốc bắt đầu này; ngày kết thúc sớm dự kiến được tính bằng ngày bắt đầu cộng `EF`. Mục **Mốc bàn giao** hiển thị cảnh báo khi ngày này sau hạn bàn giao, cùng chuỗi phụ thuộc gây chậm. Chi tiết cảnh báo chỉ trả về tên công việc, không trả mã công việc.
+
+Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng mục, quan hệ công việc và mốc bàn giao. Các tài khoản đã đăng nhập khác có thể xem cây, mốc và cảnh báo. Cơ sở dữ liệu hiện có tự động được bổ sung cột `category_id` cùng các bảng `categories`, `category_tasks`, `task_dependencies` và `milestones` khi backend khởi động.
