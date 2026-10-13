@@ -1,5 +1,8 @@
-from flask import Blueprint, jsonify, request
-from datetime import datetime
+from datetime import date, datetime
+
+from flask import Blueprint, current_app, jsonify, request
+
+from ..models import cong_viec as tasks
 from .auth import login_required, roles_required
 
 api = Blueprint("api", __name__)
@@ -9,12 +12,6 @@ cong_trinh = [
     {"id": 2, "ten": "Tòa nhà văn phòng A1", "dia_diem": "Hà Nội", "tien_do": 60, "trang_thai": "Đang thi công"},
     {"id": 3, "ten": "Nhà máy sản xuất B2", "dia_diem": "Bắc Ninh", "tien_do": 95, "trang_thai": "Sắp hoàn thành"},
     {"id": 4, "ten": "Trường học Green School", "dia_diem": "Hải Phòng", "tien_do": 35, "trang_thai": "Mới khởi công"},
-]
-
-cong_viec = [
-    {"id": 1, "ten": "Đổ bê tông móng", "cong_trinh": "Khu đô thị Bắc Sông Cầu", "nguoi_phu_trach": "Nguyễn Văn An", "trang_thai": "Đang thực hiện", "han": "2026-10-05"},
-    {"id": 2, "ten": "Lắp đặt cốt thép", "cong_trinh": "Tòa nhà văn phòng A1", "nguoi_phu_trach": "Trần Minh Đức", "trang_thai": "Hoàn thành", "han": "2026-10-02"},
-    {"id": 3, "ten": "Kiểm tra vật tư", "cong_trinh": "Nhà máy sản xuất B2", "nguoi_phu_trach": "Lê Hoàng Nam", "trang_thai": "Chờ xử lý", "han": "2026-10-04"},
 ]
 
 nhan_su = [
@@ -44,7 +41,7 @@ def dashboard():
         "nhan_su": len(nhan_su),
         "vat_tu_canh_bao": sum(x["ton_kho"] < x["muc_toi_thieu"] for x in vat_tu),
         "cong_trinh_data": cong_trinh,
-        "cong_viec_hom_nay": cong_viec
+        "cong_viec_hom_nay": tasks.list_tasks(current_app.config["USER_DATABASE"])
     })
 
 @api.get("/cong-trinh")
@@ -69,7 +66,69 @@ def add_cong_trinh():
 @api.get("/cong-viec")
 @login_required
 def get_cong_viec():
-    return jsonify(cong_viec)
+    return jsonify(tasks.list_tasks(current_app.config["USER_DATABASE"]))
+
+
+@api.get("/schedule-results")
+@login_required
+def get_schedule_results():
+    database = current_app.config["USER_DATABASE"]
+    schedule_results, has_cycle = tasks.get_schedule_results(database)
+    return jsonify({
+        "tasks": tasks.list_tasks(database),
+        "schedule_results": [] if has_cycle else schedule_results,
+        "has_cycle": has_cycle,
+        "message": (
+            "Dữ liệu công việc có vòng lặp phụ thuộc, không thể tính tiến độ."
+            if has_cycle else ""
+        ),
+    })
+
+
+@api.patch("/cong-viec/<int:task_id>")
+@roles_required("admin", "manager", "engineer")
+def update_cong_viec_progress(task_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
+
+    start_date = data.get("ngay_bat_dau_thuc_te")
+    end_date = data.get("ngay_ket_thuc_thuc_te")
+    completion = data.get("phan_tram_hoan_thanh")
+
+    for value, label in (
+        (start_date, "Ngày bắt đầu thực tế"),
+        (end_date, "Ngày kết thúc thực tế"),
+    ):
+        if value is not None:
+            if not isinstance(value, str):
+                return jsonify({"error": "invalid_date", "message": f"{label} không hợp lệ."}), 400
+            try:
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError
+            except ValueError:
+                return jsonify({"error": "invalid_date", "message": f"{label} phải theo định dạng YYYY-MM-DD."}), 400
+
+    if start_date and end_date and end_date < start_date:
+        return jsonify({
+            "error": "invalid_date_range",
+            "message": "Ngày kết thúc thực tế không được trước ngày bắt đầu thực tế.",
+        }), 400
+    if isinstance(completion, bool) or not isinstance(completion, int) or not 0 <= completion <= 100:
+        return jsonify({
+            "error": "invalid_completion",
+            "message": "Phần trăm hoàn thành phải là số nguyên từ 0 đến 100.",
+        }), 400
+
+    if not tasks.update_actual_progress(
+        current_app.config["USER_DATABASE"], task_id, start_date, end_date, completion
+    ):
+        return jsonify({"error": "not_found", "message": "Không tìm thấy công việc."}), 404
+    updated = next(
+        task for task in tasks.list_tasks(current_app.config["USER_DATABASE"])
+        if task["id"] == task_id
+    )
+    return jsonify(updated)
 
 @api.get("/nhan-su")
 @login_required

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import { apiFetch, setCsrfToken, setUnauthorizedHandler } from './api.js';
 import './style.css';
+import './task-progress.css';
 
 function LoginGate() {
   const [user, setUser] = useState(null);

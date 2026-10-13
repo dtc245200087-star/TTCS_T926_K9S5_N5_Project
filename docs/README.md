@@ -58,3 +58,16 @@ Mở `http://localhost:5173`. Cơ sở dữ liệu tài khoản cục bộ đư�
 - `GET /api/auth/users`, `POST /api/auth/users`, `PATCH /api/auth/users/<id>` — chỉ quản trị viên.
 
 API trả `401` nếu chưa đăng nhập, `403` nếu tài khoản không đủ quyền và yêu cầu `X-CSRF-Token` trên mọi yêu cầu thay đổi dữ liệu. Cookie phiên là HttpOnly, SameSite=Lax; mật khẩu được băm trước khi ghi SQLite. Quản trị viên cuối cùng không thể bị khóa/hạ quyền, và người dùng không thể tự khóa hoặc tự hạ quyền.
+
+## Cập nhật tiến độ thực tế
+
+Trong mục **Công việc**, quản trị viên, quản lý công trình và kỹ sư có thể mở form bằng nút **Cập nhật**. Mục **Tiến độ và đường găng** dùng cùng dữ liệu `GET /api/cong-viec`; chọn thanh của một công việc trong cơ sở dữ liệu sẽ mở cùng form cập nhật. Tiến độ thực tế được tô màu trên thanh Gantt. Dữ liệu kế hoạch của biểu đồ (ES, EF, LS, LF, độ trễ và trạng thái đường găng) được lưu cùng công việc và không bị thay đổi khi cập nhật tiến độ thực tế. Công việc không có bản ghi tương ứng không thể sửa. Ngày kết thúc không được trước ngày bắt đầu; máy chủ và SQLite cùng kiểm tra các ràng buộc này.
+
+- `PATCH /api/cong-viec/<id>` — cập nhật `ngay_bat_dau_thuc_te`, `ngay_ket_thuc_thuc_te` (ngày `YYYY-MM-DD` hoặc `null`) và `phan_tram_hoan_thanh` (số nguyên 0–100). Chỉ vai trò `admin`, `manager`, `engineer` được cập nhật.
+- `GET /api/cong-viec` — trả các trường tiến độ thực tế và kế hoạch Gantt để cả hai mục dùng chung dữ liệu.
+
+Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
+
+## Bảng kết quả tiến độ
+
+Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.

@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request, session
 from flask_cors import CORS
 
 from .models import user as users
+from .models import cong_viec as tasks
 from .routes.api import api
 from .routes.auth import auth
 
@@ -34,6 +35,7 @@ def create_app(test_config=None):
     db_path = Path(app.config["USER_DATABASE"])
     db_path.parent.mkdir(parents=True, exist_ok=True)
     users.initialize_database(str(db_path))
+    tasks.initialize_database(str(db_path))
     if users.count_users(str(db_path)) == 0:
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
         password = os.environ.get("INITIAL_ADMIN_PASSWORD")
