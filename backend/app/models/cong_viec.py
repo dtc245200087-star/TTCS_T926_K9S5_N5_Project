@@ -112,7 +112,7 @@ def list_tasks(database_path):
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
         db.row_factory = sqlite3.Row
         rows = db.execute(
-            """SELECT id, ten, cong_trinh, nguoi_phu_trach, trang_thai, han,
+            """SELECT id, ten, cong_trinh, nguoi_phu_trach, trang_thai, han, category_id,
                       ngay_bat_dau_thuc_te, ngay_ket_thuc_thuc_te,
                       phan_tram_hoan_thanh, es, ef, ls, lf, total_float, is_critical
                FROM cong_viec ORDER BY id"""
@@ -120,14 +120,36 @@ def list_tasks(database_path):
         return [dict(row) for row in rows]
 
 
-def update_actual_progress(database_path, task_id, start_date, end_date, completion):
+def update_actual_progress(
+    database_path, task_id, start_date, end_date, completion,
+    category_id=None, update_category=False,
+):
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
-        cursor = db.execute(
-            """UPDATE cong_viec
-               SET ngay_bat_dau_thuc_te = ?, ngay_ket_thuc_thuc_te = ?,
-                   phan_tram_hoan_thanh = ?
-               WHERE id = ?""",
-            (start_date, end_date, completion, task_id),
-        )
+        if update_category:
+            existing = db.execute(
+                "SELECT category_id FROM cong_viec WHERE id = ?", (task_id,)
+            ).fetchone()
+            cursor = db.execute(
+                """UPDATE cong_viec
+                   SET ngay_bat_dau_thuc_te = ?, ngay_ket_thuc_thuc_te = ?,
+                       phan_tram_hoan_thanh = ?, category_id = ?
+                   WHERE id = ?""",
+                (start_date, end_date, completion, category_id, task_id),
+            )
+            if cursor.rowcount and existing[0] != category_id:
+                db.execute("DELETE FROM category_tasks WHERE task_id = ?", (task_id,))
+                if category_id is not None:
+                    db.execute(
+                        "INSERT INTO category_tasks (category_id, task_id) VALUES (?, ?)",
+                        (category_id, task_id),
+                    )
+        else:
+            cursor = db.execute(
+                """UPDATE cong_viec
+                   SET ngay_bat_dau_thuc_te = ?, ngay_ket_thuc_thuc_te = ?,
+                       phan_tram_hoan_thanh = ?
+                   WHERE id = ?""",
+                (start_date, end_date, completion, task_id),
+            )
         db.commit()
         return cursor.rowcount > 0

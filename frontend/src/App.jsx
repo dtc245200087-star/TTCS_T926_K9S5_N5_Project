@@ -7,13 +7,26 @@ import {
 } from "lucide-react";
 import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
+import CategoryTree from "./components/CategoryTree.jsx";
+import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
+import "./milestone.css";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
 
+function flattenCategoryTree(categories, result = []) {
+  for (const category of categories) {
+    result.push(category);
+    flattenCategoryTree(category.children || [], result);
+  }
+  return result;
+}
+
 const menu = [
   ["Tổng quan", LayoutDashboard],
   ["Công trình", Building2],
+  ["Hạng mục", ClipboardList],
+  ["Mốc bàn giao", CalendarDays],
   ["Công việc", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
   ["Nhân sự", Users],
@@ -29,6 +42,7 @@ function App({ user, onLogout, onPasswordChanged }) {
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
   const [taskData, setTaskData] = useState([]);
+  const [categoryOptions, setCategoryOptions] = useState([]);
   const [tasksError, setTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState(null);
   const [progressForm, setProgressForm] = useState(null);
@@ -61,6 +75,7 @@ function App({ user, onLogout, onPasswordChanged }) {
       ngay_bat_dau_thuc_te: task.ngay_bat_dau_thuc_te || "",
       ngay_ket_thuc_thuc_te: task.ngay_ket_thuc_thuc_te || "",
       phan_tram_hoan_thanh: String(task.phan_tram_hoan_thanh ?? 0),
+      category_id: task.category_id == null ? "" : String(task.category_id),
     });
     setProgressError("");
   }
@@ -91,6 +106,9 @@ function App({ user, onLogout, onPasswordChanged }) {
           ngay_bat_dau_thuc_te: progressForm.ngay_bat_dau_thuc_te || null,
           ngay_ket_thuc_thuc_te: progressForm.ngay_ket_thuc_thuc_te || null,
           phan_tram_hoan_thanh: completion,
+          ...(canManageCategories
+            ? { category_id: progressForm.category_id ? Number(progressForm.category_id) : null }
+            : {}),
         }),
       });
       const result = await response.json();
@@ -104,6 +122,23 @@ function App({ user, onLogout, onPasswordChanged }) {
       setSavingProgress(false);
     }
   }
+
+  const canManageCategories = ["admin", "manager"].includes(user.role);
+
+  useEffect(() => {
+    if (page !== "Công việc") return;
+    let active = true;
+    apiFetch(`${API}/categories`)
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "Không thể tải danh sách hạng mục.");
+        if (active) setCategoryOptions(flattenCategoryTree(result));
+      })
+      .catch(error => {
+        if (active) setTasksError(error.message || "Không thể tải danh sách hạng mục.");
+      });
+    return () => { active = false; };
+  }, [page]);
 
   return (
     <div className="app">
@@ -140,6 +175,8 @@ function App({ user, onLogout, onPasswordChanged }) {
 
         {page === "Tổng quan" ? <Dashboard data={data}/> :
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
+         page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
+         page === "Mốc bàn giao" ? <MilestoneAlerts/> :
          page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
@@ -153,6 +190,8 @@ function App({ user, onLogout, onPasswordChanged }) {
           setForm={setProgressForm}
           error={progressError}
           saving={savingProgress}
+          categories={categoryOptions}
+          canAssignCategory={canUpdateProgress}
           onSave={saveProgress}
           onClose={() => setSelectedTask(null)}
         />}
@@ -354,7 +393,7 @@ function Tasks({data, canUpdate, onOpenProgress, error}) {
   );
 }
 
-function ProgressFormModal({task, form, setForm, error, saving, onSave, onClose}) {
+function ProgressFormModal({task, form, setForm, error, saving, categories, canAssignCategory, onSave, onClose}) {
   return (
     <div className="modal-bg" onMouseDown={event => {
       if (event.target === event.currentTarget && !saving) onClose();
@@ -365,6 +404,12 @@ function ProgressFormModal({task, form, setForm, error, saving, onSave, onClose}
           <button type="button" aria-label="Đóng" disabled={saving} onClick={onClose}>✕</button>
         </div>
         <p className="progress-plan-note">Kế hoạch: hạn {task.han || "chưa có"} · trạng thái {task.trang_thai}. Cập nhật này không thay đổi kế hoạch.</p>
+        {canAssignCategory && <label>Hạng mục
+          <select value={form.category_id} onChange={event => setForm({ ...form, category_id: event.target.value })}>
+            <option value="">Không gán hạng mục</option>
+            {categories.map(category => <option value={category.id} key={category.id}>{category.name}</option>)}
+          </select>
+        </label>}
         <label>Ngày bắt đầu thực tế
           <input type="date" value={form.ngay_bat_dau_thuc_te} onChange={event => setForm({ ...form, ngay_bat_dau_thuc_te: event.target.value })}/>
         </label>
