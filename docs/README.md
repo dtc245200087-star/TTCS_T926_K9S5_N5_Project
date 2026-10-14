@@ -68,6 +68,14 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
 
+## Projects và cây work items
+
+Khi backend khởi động, migration phiên bản 1 tạo hai bảng `projects` và `work_items`. `work_items.project_id` tham chiếu project; `work_items.parent_id` tạo quan hệ cha-con trong cùng project. Cơ sở dữ liệu kiểm tra khóa ngoại, ngăn chu trình cha-con và có chỉ mục trên `parent_id`. Model `app.models.project_work_items.get_work_item_tree()` dùng CTE đệ quy và trả về cây lồng nhau gồm hạng mục được yêu cầu cùng tất cả cấp con.
+
+Các bảng này được bổ sung độc lập để không làm thay đổi hoặc sao chép dữ liệu đang được các luồng hiện hữu sử dụng trong `cong_viec`, `categories` và danh sách công trình cũ. Chúng không tự đồng bộ với các bảng/luồng legacy.
+
+Có thể hoàn tác migration bằng `app.migrations.downgrade_database(database_path, target_version=0)`. Lưu ý: hoàn tác phiên bản 1 sẽ xóa các bảng `work_items` và `projects` cùng dữ liệu của chúng; các bảng legacy không bị xóa.
+
 ## Hạng mục và mốc bàn giao
 
 Mục **Hạng mục** cho phép quản trị viên và quản lý công trình tạo cây hạng mục, gán công việc, và khai báo chuỗi phụ thuộc giữa các công việc. Người có quyền cập nhật tiến độ cũng có thể chọn hạng mục trong form **Cập nhật tiến độ thực tế**; lựa chọn này được lưu vào `cong_viec.category_id`. Khi chuyển công việc sang hạng mục khác, các liên kết phụ thuộc cũ của công việc đó được xóa để tránh giữ lại chuỗi không còn cùng hạng mục.
