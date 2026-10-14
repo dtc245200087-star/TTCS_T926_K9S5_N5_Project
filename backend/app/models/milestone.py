@@ -80,6 +80,45 @@ def _row_dict(row):
     return dict(row) if row else None
 
 
+class DependencyCycleError(ValueError):
+    pass
+
+
+def find_dependency_cycle(dependencies):
+    waiting_on = {}
+    nodes = set()
+    for relation in dependencies:
+        task_id = relation["task_id"]
+        depends_on_task_id = relation["depends_on_task_id"]
+        waiting_on.setdefault(task_id, set()).add(depends_on_task_id)
+        nodes.update((task_id, depends_on_task_id))
+
+    states, path, path_positions = {}, [], {}
+
+    def visit(task_id):
+        states[task_id] = 1
+        path_positions[task_id] = len(path)
+        path.append(task_id)
+        for depends_on_task_id in sorted(waiting_on.get(task_id, ())):
+            if states.get(depends_on_task_id) == 1:
+                return path[path_positions[depends_on_task_id]:] + [depends_on_task_id]
+            if states.get(depends_on_task_id, 0) == 0:
+                cycle = visit(depends_on_task_id)
+                if cycle:
+                    return cycle
+        path.pop()
+        path_positions.pop(task_id)
+        states[task_id] = 2
+        return None
+
+    for task_id in sorted(nodes):
+        if states.get(task_id, 0) == 0:
+            cycle = visit(task_id)
+            if cycle:
+                return cycle
+    return None
+
+
 def list_categories(database_path):
     with closing(connect(database_path)) as db:
         categories = db.execute(
@@ -259,6 +298,7 @@ def add_dependency(database_path, task_id, depends_on_task_id):
     if task_id == depends_on_task_id:
         raise ValueError("Công việc không thể phụ thuộc vào chính nó.")
     with closing(connect(database_path)) as db:
+        db.execute("BEGIN IMMEDIATE")
         assigned = db.execute(
             """SELECT task_id, category_id FROM category_tasks
                WHERE task_id IN (?, ?)""",
@@ -267,21 +307,37 @@ def add_dependency(database_path, task_id, depends_on_task_id):
         if len(assigned) != 2 or assigned[0]["category_id"] != assigned[1]["category_id"]:
             raise ValueError("Hai công việc phải cùng thuộc một hạng mục.")
 
-        edges = db.execute(
-            "SELECT task_id, depends_on_task_id FROM task_dependencies"
-        ).fetchall()
-        successors = {}
-        for edge in edges:
-            successors.setdefault(edge["depends_on_task_id"], set()).add(edge["task_id"])
-
-        pending, visited = [task_id], set()
-        while pending:
-            current = pending.pop()
-            if current == depends_on_task_id:
-                raise ValueError("Quan hệ này tạo thành vòng lặp phụ thuộc.")
-            if current not in visited:
-                visited.add(current)
-                pending.extend(successors.get(current, ()))
+        edges = [
+            dict(edge)
+            for edge in db.execute(
+                "SELECT task_id, depends_on_task_id FROM task_dependencies"
+            ).fetchall()
+        ]
+        proposed_edges = edges + [{
+            "task_id": task_id,
+            "depends_on_task_id": depends_on_task_id,
+        }]
+        cycle = find_dependency_cycle(proposed_edges)
+        if cycle:
+            placeholders = ",".join("?" for _ in set(cycle))
+            task_names = {
+                row["id"]: row["ten"]
+                for row in db.execute(
+                    f"SELECT id, ten FROM cong_viec WHERE id IN ({placeholders})",
+                    tuple(set(cycle)),
+                ).fetchall()
+            }
+            chain = [
+                "{} {} {}".format(
+                    task_names[waiting_id],
+                    "chờ" if index == 0 else "lại chờ",
+                    task_names[depends_on_id],
+                )
+                for index, (waiting_id, depends_on_id) in enumerate(zip(cycle, cycle[1:]))
+            ]
+            raise DependencyCycleError(
+                "Quan hệ tạo thành vòng phụ thuộc: {}.".format(", ".join(chain))
+            )
 
         db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?, ?)",
@@ -356,6 +412,10 @@ def calculate_milestone(database_path, category_id, deadline):
                   AND depends_on_task_id IN ({task_placeholders})""",
             task_ids + task_ids,
         ).fetchall()
+        if find_dependency_cycle(dependencies):
+            raise ValueError("Phát hiện vòng lặp trong quan hệ phụ thuộc công việc.")
+        if find_dependency_cycle(dependencies):
+            raise ValueError("Phát hiện vòng lặp trong quan hệ phụ thuộc công việc.")
         predecessors = {task_id: [] for task_id in tasks}
         successors = {task_id: [] for task_id in tasks}
         for relation in dependencies:
@@ -390,8 +450,6 @@ def calculate_milestone(database_path, category_id, deadline):
                     ready.append(successor_id)
             ready.sort()
 
-        if len(finish_offsets) != len(tasks):
-            raise ValueError("Phát hiện vòng lặp trong quan hệ phụ thuộc công việc.")
         terminal_tasks = [task_id for task_id in tasks if not successors[task_id]]
         final_task_id = max(
             terminal_tasks,

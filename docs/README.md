@@ -75,3 +75,5 @@ Mục **Hạng mục** cho phép quản trị viên và quản lý công trình 
 Đặt ngày bắt đầu kế hoạch cho mỗi hạng mục. Các giá trị `ES`/`EF` hiện được lưu theo số ngày tính từ mốc bắt đầu này; ngày kết thúc sớm dự kiến được tính bằng ngày bắt đầu cộng `EF`. Mục **Mốc bàn giao** hiển thị cảnh báo khi ngày này sau hạn bàn giao, cùng chuỗi phụ thuộc gây chậm. Chi tiết cảnh báo chỉ trả về tên công việc, không trả mã công việc.
 
 Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng mục, quan hệ công việc và mốc bàn giao. Các tài khoản đã đăng nhập khác có thể xem cây, mốc và cảnh báo. Cơ sở dữ liệu hiện có tự động được bổ sung cột `category_id` cùng các bảng `categories`, `category_tasks`, `task_dependencies` và `milestones` khi backend khởi động.
+
+Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
