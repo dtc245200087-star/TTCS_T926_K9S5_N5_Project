@@ -68,6 +68,14 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
 
+## Projects và cây work items
+
+Khi backend khởi động, migration phiên bản 1 tạo hai bảng `projects` và `work_items`. `work_items.project_id` tham chiếu project; `work_items.parent_id` tạo quan hệ cha-con trong cùng project. Cơ sở dữ liệu kiểm tra khóa ngoại, ngăn chu trình cha-con và có chỉ mục trên `parent_id`. Model `app.models.project_work_items.get_work_item_tree()` dùng CTE đệ quy và trả về cây lồng nhau gồm hạng mục được yêu cầu cùng tất cả cấp con.
+
+Các bảng này được bổ sung độc lập để không làm thay đổi hoặc sao chép dữ liệu đang được các luồng hiện hữu sử dụng trong `cong_viec`, `categories` và danh sách công trình cũ. Chúng không tự đồng bộ với các bảng/luồng legacy.
+
+Có thể hoàn tác migration bằng `app.migrations.downgrade_database(database_path, target_version=0)`. Lưu ý: hoàn tác phiên bản 1 sẽ xóa các bảng `work_items` và `projects` cùng dữ liệu của chúng; các bảng legacy không bị xóa.
+
 ## Benchmark S-13 (T-29)
 
 Trên Windows 11 với Chrome, biểu đồ SVG hiển thị 500 thanh trong **0,101 giây**. Khi cuộn ngang, FPS đo được là **22,8 FPS ở giữa biểu đồ** và **1,2 FPS ở đoạn cuối danh sách**, cho thấy cuộn chưa mượt ở quy mô 500 công việc dù thời gian render ban đầu nhanh. Đây là trường hợp cực đoan; với khoảng 20–50 công việc dự kiến trong dự án, tiếp tục giữ SVG. Tối ưu bằng Canvas hoặc virtualize có thể xem xét trong task mở rộng sau.
