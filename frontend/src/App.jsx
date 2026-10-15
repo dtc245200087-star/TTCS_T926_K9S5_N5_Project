@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
   Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle,
-  Menu, X, TrendingUp
+  Menu, X, TrendingUp, UploadCloud, RotateCw
 } from "lucide-react";
 import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
@@ -36,6 +36,61 @@ const menu = [
   ["Báo cáo", BarChart3],
   ["Cài đặt", Settings],
 ];
+
+function blobFromCanvas(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      blob => blob ? resolve(blob) : reject(new Error("Không thể tạo ảnh đã nén.")),
+      "image/jpeg",
+      quality,
+    );
+  });
+}
+
+async function compressDiaryImage(file) {
+  const bitmap = await createImageBitmap(file);
+  let scale = Math.min(1, 2560 / Math.max(bitmap.width, bitmap.height));
+  let compressedBlob;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Trình duyệt không hỗ trợ xử lý ảnh.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    compressedBlob = await blobFromCanvas(canvas, Math.max(0.5, 0.86 - attempt * 0.06));
+    if (compressedBlob.size < 1024 * 1024) break;
+    scale *= 0.82;
+  }
+  bitmap.close();
+  if (!compressedBlob || compressedBlob.size >= 1024 * 1024) {
+    throw new Error("Không thể nén ảnh xuống dưới 1 MB.");
+  }
+
+  const compressedBitmap = await createImageBitmap(compressedBlob);
+  const thumbnailScale = Math.min(1, 360 / Math.max(compressedBitmap.width, compressedBitmap.height));
+  const thumbnailCanvas = document.createElement("canvas");
+  thumbnailCanvas.width = Math.max(1, Math.round(compressedBitmap.width * thumbnailScale));
+  thumbnailCanvas.height = Math.max(1, Math.round(compressedBitmap.height * thumbnailScale));
+  const thumbnailContext = thumbnailCanvas.getContext("2d");
+  if (!thumbnailContext) throw new Error("Không thể tạo ảnh xem trước.");
+  thumbnailContext.drawImage(compressedBitmap, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+  compressedBitmap.close();
+  const thumbnailBlob = await blobFromCanvas(thumbnailCanvas, 0.72);
+  if (thumbnailBlob.size > 150 * 1024) {
+    throw new Error("Không thể tối ưu ảnh xem trước.");
+  }
+  return {compressedBlob, thumbnailBlob};
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 function App({ user, onLogout, onPasswordChanged }) {
   const [page, setPage] = useState("Tổng quan");
@@ -454,9 +509,108 @@ function Diary({canWrite}) {
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
   const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
+  const [selectedImages, setSelectedImages] = useState([]);
+  const [pendingImageCompressions, setPendingImageCompressions] = useState(0);
+  const [imageNote, setImageNote] = useState("");
+  const [isDraggingImages, setIsDraggingImages] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
+  const previewUrls = useRef(new Set());
+  const pendingImageCompressionCount = useRef(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => () => {
+    for (const url of previewUrls.current) URL.revokeObjectURL(url);
+  }, []);
+
+  function releasePreview(url) {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    previewUrls.current.delete(url);
+  }
+
+  async function prepareImage(image) {
+    if (image.compressedBlob && image.thumbnailBlob) return image;
+    setSelectedImages(current => current.map(item =>
+      item.id === image.id ? {...item, status: "processing", error: ""} : item
+    ));
+    try {
+      const {compressedBlob, thumbnailBlob} = await compressDiaryImage(image.file);
+      const preview = URL.createObjectURL(thumbnailBlob);
+      previewUrls.current.add(preview);
+      releasePreview(image.preview);
+      const prepared = {...image, compressedBlob, thumbnailBlob, preview, status: "ready", error: ""};
+      setSelectedImages(current => current.map(item => item.id === image.id ? prepared : item));
+      return prepared;
+    } catch (compressionError) {
+      setSelectedImages(current => current.map(item =>
+        item.id === image.id
+          ? {...item, status: "error", error: compressionError.message || "Không thể nén ảnh."}
+          : item
+      ));
+      return null;
+    }
+  }
+
+  async function uploadImage(image, entryId) {
+    setSelectedImages(current => current.map(item =>
+      item.id === image.id ? {...item, status: "uploading", error: "", entryId} : item
+    ));
+    const timeoutController = new AbortController();
+    const timeoutId = window.setTimeout(() => timeoutController.abort(), 30000);
+    try {
+      const body = new FormData();
+      body.append("image", image.compressedBlob, "field-image.jpg");
+      body.append("thumbnail", image.thumbnailBlob, "field-thumbnail.jpg");
+      body.append("ghi_chu_anh", image.note || "");
+      body.append("upload_id", image.id);
+      const response = await apiFetch(`${API}/nhat-ky/${entryId}/images`, {
+        method: "POST",
+        body,
+        signal: timeoutController.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Tải ảnh thất bại.");
+      setEntries(current => current.map(entry => entry.id === entryId
+        ? {...entry, images: [...(entry.images || []), payload]}
+        : entry
+      ));
+      setSelectedImages(current => current.filter(item => item.id !== image.id));
+      releasePreview(image.preview);
+      return true;
+    } catch (uploadError) {
+      setSelectedImages(current => current.map(item =>
+        item.id === image.id
+          ? {
+            ...item,
+            status: "error",
+            entryId,
+            error: uploadError.name === "AbortError"
+              ? "Hết thời gian chờ. Kiểm tra mạng rồi tải lại."
+              : uploadError.message || "Lỗi mạng khi tải ảnh.",
+          }
+          : item
+      ));
+      return false;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  async function retryImage(image) {
+    const prepared = await prepareImage(image);
+    if (prepared?.entryId) await uploadImage(prepared, prepared.entryId);
+  }
+
+  function openLightbox(url, alt) {
+    setLightbox({url, alt});
+  }
+
+  function closeLightbox() {
+    if (lightbox?.objectUrl) releasePreview(lightbox.objectUrl);
+    setLightbox(null);
+  }
 
   useEffect(() => {
     Promise.all([apiFetch(`${API}/cong-trinh`).then(r => r.json()), apiFetch(`${API}/cong-viec`).then(r => r.json())])
@@ -504,18 +658,92 @@ function Diary({canWrite}) {
       const response = await apiFetch(`${API}/nhat-ky`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({...form, cong_trinh: project, ngay: diaryDate, cong_viec_id: Number(form.cong_viec_id)}),
+        body: JSON.stringify({
+          ...form,
+          cong_trinh: project,
+          ngay: diaryDate,
+          cong_viec_id: Number(form.cong_viec_id),
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
       setForm(current => ({...current, noi_dung: ""}));
-      setNotice("Đã thêm mục nhật ký.");
-      loadEntries();
+      const draftImages = selectedImages.filter(image => !image.entryId);
+      const previousFailedImages = selectedImages.filter(image => image.entryId);
+      const imagesToUpload = draftImages.map(image => ({
+        ...image,
+        entryId: payload.id,
+        note: imageNote.trim(),
+      }));
+      setSelectedImages([...previousFailedImages, ...imagesToUpload]);
+      setImageNote("");
+      setEntries(current => [payload, ...current.filter(entry => entry.id !== payload.id)]);
+      if (!imagesToUpload.length) {
+        setNotice("Đã thêm mục nhật ký.");
+        return;
+      }
+      const results = await Promise.all(imagesToUpload.map(async image => {
+        const prepared = await prepareImage(image);
+        if (!prepared) return false;
+        return uploadImage(prepared, payload.id);
+      }));
+      const failedCount = results.filter(success => !success).length;
+      setNotice(failedCount
+        ? `Đã lưu nhật ký. ${failedCount} ảnh chưa tải được; nhấn “Tải lại” bên cạnh ảnh lỗi.`
+        : "Đã lưu nhật ký và tải ảnh hiện trường.");
     } catch (e) {
       setError(e.message);
     } finally {
       setSaving(false);
     }
+  }
+
+  function addImages(fileList) {
+    const incoming = Array.from(fileList);
+    const remaining = 10 - selectedImages.length - pendingImageCompressionCount.current;
+    const accepted = incoming.filter(file =>
+      file.type.startsWith("image/") && file.size <= 25 * 1024 * 1024
+    ).slice(0, remaining);
+    if (accepted.length !== incoming.length) {
+      setError("Chỉ chọn tối đa 10 tệp ảnh, mỗi ảnh gốc không quá 25 MB.");
+    } else {
+      setError("");
+    }
+    pendingImageCompressionCount.current += accepted.length;
+    setPendingImageCompressions(pendingImageCompressionCount.current);
+    for (const file of accepted) {
+      const id = crypto.randomUUID();
+      compressDiaryImage(file)
+        .then(({compressedBlob, thumbnailBlob}) => {
+          const preview = URL.createObjectURL(thumbnailBlob);
+          previewUrls.current.add(preview);
+          setSelectedImages(current => [...current, {
+            id, file, compressedBlob, thumbnailBlob, preview, status: "ready", error: "",
+          }]);
+        })
+        .catch(compressionError => {
+          setSelectedImages(current => [...current, {
+            id, file, preview: "", status: "error",
+            error: compressionError.message || "Không thể nén ảnh.",
+          }]);
+        })
+        .finally(() => {
+          pendingImageCompressionCount.current -= 1;
+          setPendingImageCompressions(pendingImageCompressionCount.current);
+        });
+    }
+  }
+
+  function removeImage(image) {
+    releasePreview(image.preview);
+    setSelectedImages(current => current.filter(item => item.id !== image.id));
+  }
+
+  function showPendingImage(image) {
+    if (!image.compressedBlob) return;
+    const objectUrl = URL.createObjectURL(image.compressedBlob);
+    previewUrls.current.add(objectUrl);
+    setLightbox({url: objectUrl, alt: image.file.name, objectUrl});
   }
 
   async function saveSummary(event) {
@@ -570,7 +798,66 @@ function Diary({canWrite}) {
           <label>Hạng mục<select required value={form.cong_viec_id} onChange={e => setForm({...form, cong_viec_id: e.target.value})}><option value="">Chọn hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
           <label>Thời gian<input required type="time" value={form.gio} onChange={e => setForm({...form, gio: e.target.value})}/></label>
           <label className="diary-description">Mô tả công việc<textarea required maxLength={5000} rows={3} value={form.noi_dung} onChange={e => setForm({...form, noi_dung: e.target.value})} placeholder="Mô tả công việc đã thực hiện..."/></label>
-          <button className="primary" disabled={saving || !projectTasks.length}>{saving ? "Đang lưu..." : "Lưu nhật ký"}</button>
+          <button className="primary" disabled={saving || !projectTasks.length || pendingImageCompressions > 0}>
+            {saving ? "Đang lưu..." : pendingImageCompressions > 0 ? `Đang nén ảnh (${pendingImageCompressions})…` : "Lưu nhật ký"}
+          </button>
+        </div>
+        <div className="diary-image-upload">
+          <span className="diary-upload-title">Hình ảnh hiện trường</span>
+          <div
+            className={`diary-dropzone${isDraggingImages ? " dragging" : ""}`}
+            onDragOver={event => { event.preventDefault(); setIsDraggingImages(true); }}
+            onDragLeave={() => setIsDraggingImages(false)}
+            onDrop={event => {
+              event.preventDefault();
+              setIsDraggingImages(false);
+              addImages(event.dataTransfer.files);
+            }}
+          >
+            <UploadCloud size={22}/>
+            <span>Kéo thả ảnh vào đây hoặc</span>
+            <label className="diary-image-picker">
+              Chọn hình ảnh hiện trường
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={event => {
+                  addImages(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            <small>Tối đa 10 ảnh · Tự động nén mỗi ảnh xuống dưới 1 MB</small>
+          </div>
+          <label className="diary-image-note">Ghi chú cho ảnh
+            <input
+              type="text"
+              maxLength={500}
+              value={imageNote}
+              onChange={event => setImageNote(event.target.value)}
+              placeholder="Ví dụ: Ảnh thi công móng khối A"
+            />
+          </label>
+          {selectedImages.length > 0 && <div className="diary-image-grid">
+            {selectedImages.map(image => <div className={`diary-image-card ${image.status === "error" ? "failed" : ""}`} key={image.id}>
+              <button className="diary-image-preview" type="button" onClick={() => showPendingImage(image)} disabled={!image.compressedBlob}>
+                {image.preview ? <img src={image.preview} alt={image.file.name}/> : <span className="diary-image-placeholder">Đang xử lý ảnh</span>}
+              </button>
+              <button className="diary-image-remove" type="button" aria-label={`Xóa ảnh ${image.file.name}`} onClick={() => removeImage(image)}><X size={15}/></button>
+              <small className="diary-image-name" title={image.file.name}>{image.file.name}</small>
+              <small className="diary-image-size">
+                {formatFileSize(image.file.size)}
+                {image.compressedBlob ? ` → ${formatFileSize(image.compressedBlob.size)}` : ""}
+              </small>
+              <span className={`diary-upload-status ${image.status === "error" ? "not-uploaded" : ""}`}>
+                {image.status === "processing" ? "Đang nén" : image.status === "uploading" ? "Đang tải" : image.status === "error" ? "Chưa tải" : "Chưa tải"}
+              </span>
+              {image.status === "error" && <small className="diary-image-error">{image.error}</small>}
+              {image.status === "error" && image.entryId && <button className="diary-retry" type="button" onClick={() => retryImage(image)}><RotateCw size={13}/> Tải lại</button>}
+              {image.status === "error" && !image.entryId && <button className="diary-retry" type="button" onClick={() => retryImage(image)}><RotateCw size={13}/> Thử nén lại</button>}
+            </div>)}
+          </div>}
         </div>
       </form>}
       {error && <div className="alert" role="alert">{error}</div>}
@@ -578,9 +865,23 @@ function Diary({canWrite}) {
       <section className="panel diary-list">
         <div className="panel-head"><div><h2>Nhật ký ngày {diaryDate}</h2><p>{project || "Đang tải công trình"}</p></div></div>
         {entries.length ? <div className="diary-entries">{entries.map(entry => <article className="diary-entry" key={entry.id}>
-          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small></div>
+          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small>
+            {entry.images?.length > 0 && <div className="diary-saved-images">{entry.images.map((image, index) => <figure key={image.id || `${image.url}-${index}`}>
+              <button type="button" onClick={() => openLightbox(image.url, image.ghi_chu || `Ảnh hiện trường ${index + 1}`)} aria-label="Mở ảnh hiện trường">
+                <img src={image.thumbnail_url || image.url} loading="lazy" alt={image.ghi_chu || `Ảnh hiện trường ${index + 1}`}/>
+              </button>
+              <span className="diary-upload-status uploaded">Đã tải</span>
+              {image.ghi_chu && <figcaption>{image.ghi_chu}</figcaption>}
+            </figure>)}</div>}
+          </div>
         </article>)}</div> : <p className="diary-empty">Chưa có mục nhật ký cho bộ lọc này.</p>}
       </section>
+      {lightbox && <div className="diary-lightbox" role="dialog" aria-modal="true" aria-label="Ảnh hiện trường" onMouseDown={event => {
+        if (event.target === event.currentTarget) closeLightbox();
+      }}>
+        <button type="button" className="diary-lightbox-close" aria-label="Đóng ảnh" onClick={closeLightbox}><X/></button>
+        <img src={lightbox.url} alt={lightbox.alt}/>
+      </div>}
     </div>
   );
 }

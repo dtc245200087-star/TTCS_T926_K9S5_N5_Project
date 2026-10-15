@@ -68,12 +68,15 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
 
+## Ảnh hiện trường trong nhật ký thi công
+
+Khi tạo mục nhật ký, có thể chọn hoặc kéo thả tối đa 10 ảnh. Trình duyệt nén ảnh sang JPEG dưới 1 MB và tạo thumbnail riêng trước khi gửi từng ảnh lên API. Nhật ký được lưu độc lập trước ảnh, vì vậy lỗi mạng khi tải ảnh không làm mất nội dung; từng ảnh lỗi có thể tải lại mà không tạo bản trùng. Thumbnail được tải lười, và ảnh đầy đủ chỉ được lấy khi mở ảnh. Ảnh được lưu trong thư mục `diary_images` cạnh cơ sở dữ liệu người dùng; Docker Compose lưu thư mục này cùng volume `backend_data`.
+
 ## Projects và cây work items
 
 Khi backend khởi động, migration phiên bản 1 tạo hai bảng `projects` và `work_items`. `work_items.project_id` tham chiếu project; `work_items.parent_id` tạo quan hệ cha-con trong cùng project. Cơ sở dữ liệu kiểm tra khóa ngoại, ngăn chu trình cha-con và có chỉ mục trên `parent_id`. Model `app.models.project_work_items.get_work_item_tree()` dùng CTE đệ quy và trả về cây lồng nhau gồm hạng mục được yêu cầu cùng tất cả cấp con.
 
 Các bảng này được bổ sung độc lập để không làm thay đổi hoặc sao chép dữ liệu đang được các luồng hiện hữu sử dụng trong `cong_viec`, `categories` và danh sách công trình cũ. Chúng không tự đồng bộ với các bảng/luồng legacy.
-
 Có thể hoàn tác migration bằng `app.migrations.downgrade_database(database_path, target_version=0)`. Lưu ý: hoàn tác phiên bản 1 sẽ xóa các bảng `work_items` và `projects` cùng dữ liệu của chúng; các bảng legacy không bị xóa.
 
 ## Benchmark S-13 (T-29)
