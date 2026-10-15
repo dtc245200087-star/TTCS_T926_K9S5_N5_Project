@@ -479,7 +479,102 @@ def add_nhat_ky():
         description=description.strip(),
         user_id=request.current_user["id"],
     )
+    if entry is None:
+        return jsonify({"error": "diary_day_locked", "message": "Nhật ký ngày này đã khóa sổ. Hãy yêu cầu quản lý mở khóa trước khi sửa."}), 423
     return jsonify(entry), 201
+
+
+@api.patch("/nhat-ky/<int:entry_id>")
+@roles_required("admin", "manager", "engineer")
+def edit_nhat_ky(entry_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
+    entries = diaries.list_entries(_database_path())
+    entry = next((item for item in entries if item["id"] == entry_id), None)
+    if not entry:
+        return jsonify({"error": "not_found", "message": "Không tìm thấy mục nhật ký."}), 404
+    task_id = data.get("cong_viec_id", entry["cong_viec_id"])
+    entry_time = data.get("gio", entry["gio"])
+    description = data.get("noi_dung", "")
+    if isinstance(task_id, bool) or not str(task_id).isdigit():
+        return jsonify({"error": "invalid_work_item", "message": "Hạng mục không hợp lệ."}), 400
+    task_id = int(task_id)
+    task = next((item for item in tasks.list_tasks(_database_path()) if item["id"] == task_id), None)
+    if not task or task.get("cong_trinh") != entry["cong_trinh"]:
+        return jsonify({"error": "invalid_work_item", "message": "Hạng mục không thuộc công trình của nhật ký."}), 400
+    try:
+        if not isinstance(entry_time, str) or datetime.strptime(entry_time, "%H:%M").strftime("%H:%M") != entry_time:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận phải theo định dạng HH:MM."}), 400
+    if not isinstance(description, str) or not description.strip() or len(description.strip()) > 5000:
+        return jsonify({"error": "invalid_description", "message": "Nội dung công việc là bắt buộc và tối đa 5000 ký tự."}), 400
+    result = diaries.update_entry(_database_path(), entry_id, task_id=task_id, entry_time=entry_time, description=description.strip())
+    if result == "locked":
+        return jsonify({"error": "diary_day_locked", "message": "Nhật ký ngày này đã khóa sổ. Hãy yêu cầu quản lý mở khóa trước khi sửa."}), 423
+    updated = next(item for item in diaries.list_entries(_database_path(), project=entry["cong_trinh"], diary_date=entry["ngay"]) if item["id"] == entry_id)
+    return jsonify(updated)
+
+
+def _valid_diary_day(value):
+    try:
+        return isinstance(value, str) and date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _diary_lock_target(data):
+    project = data.get("cong_trinh") if isinstance(data, dict) else request.args.get("cong_trinh")
+    diary_date = data.get("ngay") if isinstance(data, dict) else request.args.get("ngay")
+    if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
+        return None, None, (jsonify({"error": "invalid_project", "message": "Công trình không hợp lệ."}), 400)
+    if not _valid_diary_day(diary_date):
+        return None, None, (jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400)
+    return project, diary_date, None
+
+
+@api.post("/nhat-ky/ngay/<day>/lock")
+@roles_required("admin", "manager", "engineer")
+def lock_nhat_ky_day(day):
+    data = request.get_json(silent=True)
+    project, diary_date, error = _diary_lock_target(data if data is not None else {"ngay": day, "cong_trinh": request.args.get("cong_trinh")})
+    if error:
+        return error
+    if diary_date != day:
+        return jsonify({"error": "invalid_date", "message": "Ngày trên đường dẫn không khớp."}), 400
+    if not diaries.lock_day(_database_path(), project, day, request.current_user["id"], request.current_user["full_name"]):
+        return jsonify({"error": "already_locked", "message": "Nhật ký ngày này đã được khóa."}), 409
+    return jsonify({"ok": True, "message": "Đã khóa sổ nhật ký."})
+
+
+@api.post("/nhat-ky/ngay/<day>/unlock")
+@roles_required("admin", "manager")
+def unlock_nhat_ky_day(day):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
+    project, diary_date, error = _diary_lock_target({"cong_trinh": data.get("cong_trinh"), "ngay": day})
+    if error:
+        return error
+    reason = data.get("ly_do")
+    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 500:
+        return jsonify({"error": "invalid_reason", "message": "Cần ghi lý do mở khóa (tối đa 500 ký tự)."}), 400
+    if not diaries.unlock_day(_database_path(), project, diary_date, request.current_user["id"], request.current_user["full_name"], reason.strip()):
+        return jsonify({"error": "not_locked", "message": "Nhật ký ngày này hiện không khóa."}), 409
+    return jsonify({"ok": True, "message": "Đã mở khóa nhật ký."})
+
+
+@api.get("/nhat-ky/audit")
+@roles_required("admin", "manager")
+def get_nhat_ky_audit():
+    project = request.args.get("cong_trinh")
+    diary_date = request.args.get("ngay")
+    if diary_date and not _valid_diary_day(diary_date):
+        return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
+    if project and project not in {item["ten"] for item in cong_trinh}:
+        return jsonify({"error": "invalid_project", "message": "Công trình không hợp lệ."}), 400
+    return jsonify(diaries.list_audit(_database_path(), project, diary_date))
 
 
 @api.get("/nhat-ky/thong-tin-ngay")
@@ -546,4 +641,6 @@ def update_nhat_ky_thong_tin_ngay():
         weather=weather,
         weather_notes=data.get("ghi_chu_thoi_tiet", "").strip(),
     )
+    if summary is None:
+        return jsonify({"error": "diary_day_locked", "message": "Nhật ký ngày này đã khóa sổ. Hãy yêu cầu quản lý mở khóa trước khi sửa."}), 423
     return jsonify(summary)

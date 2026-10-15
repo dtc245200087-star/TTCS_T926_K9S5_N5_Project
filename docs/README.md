@@ -89,3 +89,12 @@ Mục **Hạng mục** cho phép quản trị viên và quản lý công trình 
 Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng mục, quan hệ công việc và mốc bàn giao. Các tài khoản đã đăng nhập khác có thể xem cây, mốc và cảnh báo. Cơ sở dữ liệu hiện có tự động được bổ sung cột `category_id` cùng các bảng `categories`, `category_tasks`, `task_dependencies` và `milestones` khi backend khởi động.
 
 Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
+
+## Khóa sổ nhật ký theo công trình và ngày (SCRUM-34)
+
+- `GET /api/nhat-ky` trả trạng thái khóa sổ cùng từng mục nhật ký.
+- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/lock` khóa nhật ký cho công trình và ngày được gửi trong JSON `cong_trinh` và `ngay`.
+- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/unlock` mở khóa; chỉ `manager` hoặc `admin`, bắt buộc gửi `cong_trinh` và `ly_do` (tối đa 500 ký tự).
+- `GET /api/nhat-ky/audit?cong_trinh=<tên>&ngay=<YYYY-MM-DD>` xem lịch sử khóa/mở khóa; chỉ `manager` hoặc `admin`.
+
+Máy chủ kiểm tra trạng thái khóa trong giao dịch SQLite trước khi thêm, sửa mục nhật ký hoặc cập nhật thông tin ngày. Khi khóa, các thao tác ghi trả `423`; lịch sử ghi lại người thực hiện, thời điểm và lý do mở khóa.

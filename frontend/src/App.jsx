@@ -181,7 +181,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
-         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
+         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} canUnlock={["admin", "manager"].includes(user.role)}/> :
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
@@ -444,7 +444,7 @@ function Materials() {
   );
 }
 
-function Diary({canWrite}) {
+function Diary({canWrite, canUnlock}) {
   const today = new Date().toLocaleDateString("en-CA");
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -457,6 +457,13 @@ function Diary({canWrite}) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockedBy, setLockedBy] = useState("");
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [audit, setAudit] = useState([]);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   useEffect(() => {
     Promise.all([apiFetch(`${API}/cong-trinh`).then(r => r.json()), apiFetch(`${API}/cong-viec`).then(r => r.json())])
@@ -490,7 +497,10 @@ function Diary({canWrite}) {
       .then(async response => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "Không tải được thông tin trong ngày.");
-        setSummary(payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+        const day = payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", is_locked: false};
+        setSummary(day);
+        setIsLocked(Boolean(day.is_locked));
+        setLockedBy(day.khoa_boi || "");
       })
       .catch(e => setError(e.message));
   }, [project, diaryDate]);
@@ -501,15 +511,16 @@ function Diary({canWrite}) {
     setNotice("");
     setSaving(true);
     try {
-      const response = await apiFetch(`${API}/nhat-ky`, {
-        method: "POST",
+      const response = await apiFetch(editing ? `${API}/nhat-ky/${editing.id}` : `${API}/nhat-ky`, {
+        method: editing ? "PATCH" : "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({...form, cong_trinh: project, ngay: diaryDate, cong_viec_id: Number(form.cong_viec_id)}),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
       setForm(current => ({...current, noi_dung: ""}));
-      setNotice("Đã thêm mục nhật ký.");
+      setEditing(null);
+      setNotice(editing ? "Đã cập nhật mục nhật ký." : "Đã thêm mục nhật ký.");
       loadEntries();
     } catch (e) {
       setError(e.message);
@@ -538,6 +549,38 @@ function Diary({canWrite}) {
     }
   }
 
+  async function lockDay() {
+    if (!window.confirm(`Khóa sổ nhật ký ${project} ngày ${diaryDate}?`)) return;
+    const response = await apiFetch(`${API}/nhat-ky/ngay/${diaryDate}/lock`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cong_trinh: project, ngay: diaryDate}),
+    });
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không thể khóa nhật ký."); return; }
+    setIsLocked(true); setLockedBy(result.khoa_boi || "");
+    setNotice("Đã khóa sổ nhật ký ngày này.");
+  }
+
+  async function unlockDay(event) {
+    event.preventDefault();
+    const response = await apiFetch(`${API}/nhat-ky/ngay/${diaryDate}/unlock`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cong_trinh: project, ly_do: reason}),
+    });
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không thể mở khóa nhật ký."); return; }
+    setIsLocked(false); setLockedBy(""); setReason(""); setUnlockOpen(false);
+    setNotice("Đã mở khóa nhật ký.");
+  }
+
+  async function showAudit() {
+    const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
+    const response = await apiFetch(`${API}/nhat-ky/audit?${query}`);
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không tải được lịch sử."); return; }
+    setAudit(result); setAuditOpen(true);
+  }
+
   return (
     <div className="content">
       <div className="page-title">
@@ -554,8 +597,8 @@ function Diary({canWrite}) {
         </div>
       </section>
       <section className="panel daily-summary">
-        <div className="panel-head"><div><h2>Tình hình trong ngày</h2><p>Nhân lực, thiết bị sử dụng và thời tiết tại công trường.</p></div></div>
-        {canWrite ? <form onSubmit={saveSummary} className="summary-form">
+        <div className="panel-head"><div><h2>Tình hình trong ngày</h2><p>Nhân lực, thiết bị sử dụng và thời tiết tại công trường.</p><p>{isLocked ? `Đã khóa sổ${lockedBy ? ` bởi ${lockedBy}` : ""}` : "Đang mở"}</p></div><div className="diary-lock-actions">{isLocked ? canUnlock && <button type="button" className="text-btn" onClick={() => {setReason(""); setUnlockOpen(true);}}>Mở khóa</button> : canWrite && <button type="button" className="text-btn" onClick={lockDay}>Khóa sổ ngày</button>}{canUnlock && <button type="button" className="text-btn" onClick={showAudit}>Lịch sử</button>}</div></div>
+        {canWrite && !isLocked ? <form onSubmit={saveSummary} className="summary-form">
           <label>Số nhân lực<input type="number" min="0" max="10000" value={summary.nhan_luc_so_nguoi ?? ""} onChange={e => setSummary({...summary, nhan_luc_so_nguoi: e.target.value})} placeholder="Nhập số người"/></label>
           <label>Ghi chú nhân lực<input maxLength={2000} value={summary.nhan_luc_ghi_chu || ""} onChange={e => setSummary({...summary, nhan_luc_ghi_chu: e.target.value})} placeholder="Ví dụ: 2 tổ thi công, 1 cán bộ giám sát"/></label>
           <label>Thiết bị sử dụng<textarea rows={2} maxLength={4000} value={summary.thiet_bi || ""} onChange={e => setSummary({...summary, thiet_bi: e.target.value})} placeholder="Tên thiết bị và tình trạng sử dụng"/></label>
@@ -564,8 +607,8 @@ function Diary({canWrite}) {
           <button className="primary">Lưu tình hình ngày</button>
         </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
       </section>
-      {canWrite && <form className="panel diary-form" onSubmit={saveEntry}>
-        <div className="panel-head"><div><h2>Thêm mục nhật ký</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div></div>
+      {canWrite && !isLocked && <form className="panel diary-form" onSubmit={saveEntry}>
+        <div className="panel-head"><div><h2>{editing ? "Sửa mục nhật ký" : "Thêm mục nhật ký"}</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div>{editing && <button type="button" className="text-btn" onClick={() => {setEditing(null); setForm({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});}}>Hủy sửa</button>}</div>
         <div className="diary-form-fields">
           <label>Hạng mục<select required value={form.cong_viec_id} onChange={e => setForm({...form, cong_viec_id: e.target.value})}><option value="">Chọn hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
           <label>Thời gian<input required type="time" value={form.gio} onChange={e => setForm({...form, gio: e.target.value})}/></label>
@@ -578,9 +621,11 @@ function Diary({canWrite}) {
       <section className="panel diary-list">
         <div className="panel-head"><div><h2>Nhật ký ngày {diaryDate}</h2><p>{project || "Đang tải công trình"}</p></div></div>
         {entries.length ? <div className="diary-entries">{entries.map(entry => <article className="diary-entry" key={entry.id}>
-          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small></div>
+          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small></div>{canWrite && !isLocked && <button type="button" className="text-btn" onClick={() => {setEditing(entry); setForm({cong_viec_id: String(entry.cong_viec_id), gio: entry.gio, noi_dung: entry.noi_dung}); window.scrollTo({top: 0, behavior: "smooth"});}}>Sửa</button>}
         </article>)}</div> : <p className="diary-empty">Chưa có mục nhật ký cho bộ lọc này.</p>}
       </section>
+      {unlockOpen && <div className="modal-bg"><form className="modal" onSubmit={unlockDay}><div className="modal-head"><h2>Mở khóa nhật ký</h2><button type="button" onClick={() => setUnlockOpen(false)}>✕</button></div><p className="modal-note">{project} · {diaryDate}</p><label>Lý do mở khóa<input required maxLength="500" value={reason} onChange={e => setReason(e.target.value)} placeholder="Nhập lý do"/></label><div className="modal-actions"><button className="btn btn-primary">Mở khóa</button><button type="button" className="btn" onClick={() => setUnlockOpen(false)}>Hủy</button></div></form></div>}
+      {auditOpen && <div className="modal-bg"><div className="modal audit-modal"><div className="modal-head"><h2>Lịch sử khóa sổ</h2><button type="button" onClick={() => setAuditOpen(false)}>✕</button></div>{audit.length ? <div className="audit-list">{audit.map(item => <div className="audit-row" key={item.id}><b>{item.hanh_dong === "lock" ? "Khóa sổ" : "Mở khóa"}</b><span>{item.thuc_hien_boi} · {new Date(item.thuc_hien_luc).toLocaleString("vi-VN")}</span>{item.ly_do && <small>Lý do: {item.ly_do}</small>}</div>)}</div> : <p className="modal-note">Chưa có thao tác khóa/mở khóa.</p>}</div></div>}
     </div>
   );
 }
