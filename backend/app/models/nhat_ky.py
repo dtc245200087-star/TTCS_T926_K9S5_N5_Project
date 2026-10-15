@@ -1,33 +1,52 @@
-"""SQLite persistence and locking rules for construction diary entries."""
+"""SQLite persistence for daily construction diary entries."""
 
+import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 
-from .user import connect
+
+INITIAL_ENTRIES = (
+    ("2026-10-01", "Khu đô thị Bắc Sông Cầu", 1, "08:00", "Thi công móng khu A, thời tiết thuận lợi."),
+    ("2026-09-30", "Tòa nhà văn phòng A1", 2, "09:00", "Hoàn thành lắp đặt cốt thép tầng 3."),
+)
 
 
 def initialize_database(database_path):
-    with closing(connect(database_path)) as db:
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys = ON")
         db.executescript("""
-            CREATE TABLE IF NOT EXISTS nhat_ky (
+            CREATE TABLE IF NOT EXISTS nhat_ky_ngay (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ngay TEXT NOT NULL,
                 cong_trinh TEXT NOT NULL,
+                ngay TEXT NOT NULL,
+                nguoi_lap_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                nhan_luc_so_nguoi INTEGER,
+                nhan_luc_ghi_chu TEXT,
+                thiet_bi TEXT,
+                thoi_tiet TEXT,
+                ghi_chu_thoi_tiet TEXT,
+                is_locked INTEGER NOT NULL DEFAULT 0,
+                khoa_boi_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                khoa_boi TEXT,
+                khoa_luc TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (cong_trinh, ngay)
+            );
+            CREATE TABLE IF NOT EXISTS nhat_ky_muc (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nhat_ky_ngay_id INTEGER NOT NULL REFERENCES nhat_ky_ngay(id) ON DELETE CASCADE,
+                cong_viec_id INTEGER NOT NULL REFERENCES cong_viec(id) ON DELETE RESTRICT,
+                gio TEXT NOT NULL,
                 noi_dung TEXT NOT NULL,
-                nguoi_lap TEXT NOT NULL,
-                nguoi_lap_id INTEGER,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                nguoi_lap_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            CREATE INDEX IF NOT EXISTS idx_nhat_ky_ngay ON nhat_ky(ngay);
-            CREATE TABLE IF NOT EXISTS nhat_ky_khoa_ngay (
-                ngay TEXT PRIMARY KEY,
-                khoa_boi_id INTEGER NOT NULL,
-                khoa_boi TEXT NOT NULL,
-                khoa_luc TEXT NOT NULL
-            );
+            CREATE INDEX IF NOT EXISTS nhat_ky_ngay_lookup ON nhat_ky_ngay(cong_trinh, ngay);
+            CREATE INDEX IF NOT EXISTS nhat_ky_muc_work_item ON nhat_ky_muc(cong_viec_id);
             CREATE TABLE IF NOT EXISTS nhat_ky_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cong_trinh TEXT NOT NULL,
                 ngay TEXT NOT NULL,
                 hanh_dong TEXT NOT NULL CHECK (hanh_dong IN ('lock', 'unlock')),
                 ly_do TEXT NOT NULL DEFAULT '',
@@ -35,108 +54,225 @@ def initialize_database(database_path):
                 thuc_hien_boi TEXT NOT NULL,
                 thuc_hien_luc TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_nhat_ky_audit_ngay ON nhat_ky_audit(ngay, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_nhat_ky_audit_day ON nhat_ky_audit(cong_trinh, ngay, id DESC);
         """)
-        if db.execute("SELECT COUNT(*) FROM nhat_ky").fetchone()[0] == 0:
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            db.executemany("""
-                INSERT INTO nhat_ky (ngay, cong_trinh, noi_dung, nguoi_lap, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, [
-                ("2026-10-01", "Khu đô thị Bắc Sông Cầu", "Thi công móng khu A, thời tiết thuận lợi.", "Nguyễn Văn An", now, now),
-                ("2026-09-30", "Tòa nhà văn phòng A1", "Hoàn thành lắp đặt cốt thép tầng 3.", "Trần Minh Đức", now, now),
-            ])
+        day_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_ngay)").fetchall()}
+        for column, definition in (
+            ("nhan_luc_so_nguoi", "INTEGER"),
+            ("nhan_luc_ghi_chu", "TEXT"),
+            ("thiet_bi", "TEXT"),
+            ("thoi_tiet", "TEXT"),
+            ("ghi_chu_thoi_tiet", "TEXT"),
+            ("is_locked", "INTEGER NOT NULL DEFAULT 0"),
+            ("khoa_boi_id", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+            ("khoa_boi", "TEXT"),
+            ("khoa_luc", "TEXT"),
+        ):
+            if column not in day_columns:
+                db.execute(f"ALTER TABLE nhat_ky_ngay ADD COLUMN {column} {definition}")
+
+        if db.execute("SELECT COUNT(*) FROM nhat_ky_muc").fetchone()[0] == 0:
+            first_user = db.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()
+            for diary_date, project_name, task_id, entry_time, description in INITIAL_ENTRIES:
+                task = db.execute(
+                    "SELECT id, cong_trinh FROM cong_viec WHERE id = ?", (task_id,)
+                ).fetchone()
+                if task and task["cong_trinh"] == project_name:
+                    diary_id = _get_or_create_day(db, project_name, diary_date, first_user[0] if first_user else None)
+                    db.execute(
+                        """INSERT INTO nhat_ky_muc
+                           (nhat_ky_ngay_id, cong_viec_id, gio, noi_dung, nguoi_lap_id)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (diary_id, task_id, entry_time, description, first_user[0] if first_user else None),
+                    )
         db.commit()
 
 
-def _public_entry(row):
-    return {
-        "id": row["id"],
-        "ngay": row["ngay"],
-        "cong_trinh": row["cong_trinh"],
-        "noi_dung": row["noi_dung"],
-        "nguoi_lap": row["nguoi_lap"],
-        "is_locked": bool(row["khoa_ngay"]),
-        "khoa_boi": row["khoa_boi"],
-        "khoa_luc": row["khoa_luc"],
-    }
+def list_entries(database_path, *, project=None, diary_date=None, work_item_id=None):
+    conditions, values = [], []
+    if project:
+        conditions.append("d.cong_trinh = ?")
+        values.append(project)
+    if diary_date:
+        conditions.append("d.ngay = ?")
+        values.append(diary_date)
+    if work_item_id is not None:
+        conditions.append("e.cong_viec_id = ?")
+        values.append(work_item_id)
+    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            """SELECT e.id, d.cong_trinh, d.ngay, d.is_locked,
+                      d.khoa_boi, d.khoa_luc, e.cong_viec_id,
+                      t.ten AS hang_muc, e.gio, e.noi_dung,
+                      COALESCE(u.full_name, 'Tài khoản đã xóa') AS nguoi_lap
+               FROM nhat_ky_muc e
+               JOIN nhat_ky_ngay d ON d.id = e.nhat_ky_ngay_id
+               JOIN cong_viec t ON t.id = e.cong_viec_id
+               LEFT JOIN users u ON u.id = e.nguoi_lap_id""" + where_clause +
+            " ORDER BY d.ngay DESC, e.gio, e.id",
+            values,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
-def list_entries(database_path):
-    with closing(connect(database_path)) as db:
-        rows = db.execute("""
-            SELECT n.*, k.ngay AS khoa_ngay, k.khoa_boi, k.khoa_luc
-            FROM nhat_ky n LEFT JOIN nhat_ky_khoa_ngay k ON k.ngay = n.ngay
-            ORDER BY n.ngay DESC, n.id DESC
-        """).fetchall()
-        return [_public_entry(row) for row in rows]
+def get_daily_summary(database_path, project, diary_date):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "SELECT * FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
+            (project, diary_date),
+        ).fetchone()
+        return dict(row) if row else None
 
 
-def add_entry(database_path, *, day, project, content, author, author_id):
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with closing(connect(database_path)) as db:
+def update_daily_summary(database_path, *, project, diary_date, user_id, workforce_count,
+                         workforce_notes, equipment, weather, weather_notes):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
         db.execute("BEGIN IMMEDIATE")
-        if db.execute("SELECT 1 FROM nhat_ky_khoa_ngay WHERE ngay = ?", (day,)).fetchone():
+        locked = db.execute(
+            "SELECT is_locked FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
+            (project, diary_date),
+        ).fetchone()
+        if locked and locked[0]:
             db.rollback()
             return None
-        cursor = db.execute("""
-            INSERT INTO nhat_ky (ngay, cong_trinh, noi_dung, nguoi_lap, nguoi_lap_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (day, project, content, author, author_id, now, now))
+        day_id = _get_or_create_day(db, project, diary_date, user_id)
+        db.execute(
+            """UPDATE nhat_ky_ngay
+               SET nhan_luc_so_nguoi = ?, nhan_luc_ghi_chu = ?, thiet_bi = ?,
+                   thoi_tiet = ?, ghi_chu_thoi_tiet = ?
+               WHERE id = ?""",
+            (workforce_count, workforce_notes, equipment, weather, weather_notes, day_id),
+        )
         db.commit()
-        return cursor.lastrowid
+    return get_daily_summary(database_path, project, diary_date)
 
 
-def update_entry(database_path, entry_id, *, project, content):
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with closing(connect(database_path)) as db:
+def create_entry(database_path, *, project, diary_date, task_id, entry_time, description, user_id):
+    with sqlite3.connect(database_path, timeout=10) as db:
+        db.execute("PRAGMA foreign_keys = ON")
         db.execute("BEGIN IMMEDIATE")
-        entry = db.execute("SELECT ngay FROM nhat_ky WHERE id = ?", (entry_id,)).fetchone()
-        if not entry:
+        diary_id = _get_or_create_day(db, project, diary_date, user_id)
+        locked = db.execute("SELECT is_locked FROM nhat_ky_ngay WHERE id = ?", (diary_id,)).fetchone()
+        if locked and locked[0]:
+            db.rollback()
+            return None
+        cursor = db.execute(
+            """INSERT INTO nhat_ky_muc
+               (nhat_ky_ngay_id, cong_viec_id, gio, noi_dung, nguoi_lap_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (diary_id, task_id, entry_time, description, user_id),
+        )
+        entry_id = cursor.lastrowid
+        db.commit()
+    return next((entry for entry in list_entries(database_path, project=project, diary_date=diary_date) if entry["id"] == entry_id), None)
+
+
+def update_entry(database_path, entry_id, *, task_id, entry_time, description):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys = ON")
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            """SELECT d.id, d.is_locked FROM nhat_ky_muc e
+               JOIN nhat_ky_ngay d ON d.id = e.nhat_ky_ngay_id WHERE e.id = ?""",
+            (entry_id,),
+        ).fetchone()
+        if not row:
             db.rollback()
             return "not_found"
-        if db.execute("SELECT 1 FROM nhat_ky_khoa_ngay WHERE ngay = ?", (entry["ngay"],)).fetchone():
+        if row["is_locked"]:
             db.rollback()
             return "locked"
-        db.execute("UPDATE nhat_ky SET cong_trinh = ?, noi_dung = ?, updated_at = ? WHERE id = ?",
-                   (project, content, now, entry_id))
+        db.execute(
+            "UPDATE nhat_ky_muc SET cong_viec_id = ?, gio = ?, noi_dung = ? WHERE id = ?",
+            (task_id, entry_time, description, entry_id),
+        )
         db.commit()
         return "ok"
 
 
-def lock_day(database_path, day, user_id, full_name):
+def is_day_locked(database_path, project, diary_date):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        row = db.execute(
+            "SELECT is_locked FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
+            (project, diary_date),
+        ).fetchone()
+        return bool(row and row[0])
+
+
+def lock_day(database_path, project, diary_date, user_id, full_name):
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with closing(connect(database_path)) as db:
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
         db.execute("BEGIN IMMEDIATE")
-        if db.execute("SELECT 1 FROM nhat_ky_khoa_ngay WHERE ngay = ?", (day,)).fetchone():
+        day_id = _get_or_create_day(db, project, diary_date, user_id)
+        if db.execute("SELECT is_locked FROM nhat_ky_ngay WHERE id = ?", (day_id,)).fetchone()[0]:
             db.rollback()
             return False
-        db.execute("INSERT INTO nhat_ky_khoa_ngay (ngay, khoa_boi_id, khoa_boi, khoa_luc) VALUES (?, ?, ?, ?)",
-                   (day, user_id, full_name, now))
-        db.execute("INSERT INTO nhat_ky_audit (ngay, hanh_dong, thuc_hien_boi_id, thuc_hien_boi, thuc_hien_luc) VALUES (?, 'lock', ?, ?, ?)",
-                   (day, user_id, full_name, now))
+        db.execute(
+            "UPDATE nhat_ky_ngay SET is_locked = 1, khoa_boi_id = ?, khoa_boi = ?, khoa_luc = ? WHERE id = ?",
+            (user_id, full_name, now, day_id),
+        )
+        db.execute(
+            """INSERT INTO nhat_ky_audit
+               (cong_trinh, ngay, hanh_dong, thuc_hien_boi_id, thuc_hien_boi, thuc_hien_luc)
+               VALUES (?, ?, 'lock', ?, ?, ?)""",
+            (project, diary_date, user_id, full_name, now),
+        )
         db.commit()
         return True
 
 
-def unlock_day(database_path, day, user_id, full_name, reason):
+def unlock_day(database_path, project, diary_date, user_id, full_name, reason):
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with closing(connect(database_path)) as db:
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
         db.execute("BEGIN IMMEDIATE")
-        if not db.execute("SELECT 1 FROM nhat_ky_khoa_ngay WHERE ngay = ?", (day,)).fetchone():
+        row = db.execute(
+            "SELECT id, is_locked FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
+            (project, diary_date),
+        ).fetchone()
+        if not row or not row[1]:
             db.rollback()
             return False
-        db.execute("DELETE FROM nhat_ky_khoa_ngay WHERE ngay = ?", (day,))
-        db.execute("INSERT INTO nhat_ky_audit (ngay, hanh_dong, ly_do, thuc_hien_boi_id, thuc_hien_boi, thuc_hien_luc) VALUES (?, 'unlock', ?, ?, ?, ?)",
-                   (day, reason, user_id, full_name, now))
+        db.execute("UPDATE nhat_ky_ngay SET is_locked = 0, khoa_boi_id = NULL, khoa_boi = NULL, khoa_luc = NULL WHERE id = ?", (row[0],))
+        db.execute(
+            """INSERT INTO nhat_ky_audit
+               (cong_trinh, ngay, hanh_dong, ly_do, thuc_hien_boi_id, thuc_hien_boi, thuc_hien_luc)
+               VALUES (?, ?, 'unlock', ?, ?, ?, ?)""",
+            (project, diary_date, reason, user_id, full_name, now),
+        )
         db.commit()
         return True
 
 
-def list_audit(database_path, day=None):
-    with closing(connect(database_path)) as db:
-        if day:
-            rows = db.execute("SELECT * FROM nhat_ky_audit WHERE ngay = ? ORDER BY id DESC", (day,)).fetchall()
-        else:
-            rows = db.execute("SELECT * FROM nhat_ky_audit ORDER BY id DESC LIMIT 200").fetchall()
+def list_audit(database_path, project=None, diary_date=None):
+    conditions, values = [], []
+    if project:
+        conditions.append("cong_trinh = ?")
+        values.append(project)
+    if diary_date:
+        conditions.append("ngay = ?")
+        values.append(diary_date)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute("SELECT * FROM nhat_ky_audit" + where + " ORDER BY id DESC LIMIT 200", values).fetchall()
         return [dict(row) for row in rows]
+
+
+def _get_or_create_day(db, project, diary_date, user_id):
+    db.execute(
+        """INSERT INTO nhat_ky_ngay (cong_trinh, ngay, nguoi_lap_id)
+           VALUES (?, ?, ?) ON CONFLICT(cong_trinh, ngay) DO NOTHING""",
+        (project, diary_date, user_id),
+    )
+    return db.execute(
+        "SELECT id FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
+        (project, diary_date),
+    ).fetchone()[0]

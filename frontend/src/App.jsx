@@ -3,18 +3,30 @@ import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
   Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle,
-  Menu, X, LockKeyhole, UnlockKeyhole, Pencil, History, TrendingUp
+  Menu, X, TrendingUp
 } from "lucide-react";
 import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
-import scheduleData from "./mocks/scheduleData";
+import CategoryTree from "./components/CategoryTree.jsx";
+import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
+import "./milestone.css";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
 
+function flattenCategoryTree(categories, result = []) {
+  for (const category of categories) {
+    result.push(category);
+    flattenCategoryTree(category.children || [], result);
+  }
+  return result;
+}
+
 const menu = [
   ["Tổng quan", LayoutDashboard],
   ["Công trình", Building2],
+  ["Hạng mục", ClipboardList],
+  ["Mốc bàn giao", CalendarDays],
   ["Công việc", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
   ["Nhân sự", Users],
@@ -29,11 +41,104 @@ function App({ user, onLogout, onPasswordChanged }) {
   const [page, setPage] = useState("Tổng quan");
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
+  const [taskData, setTaskData] = useState([]);
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [tasksError, setTasksError] = useState("");
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [progressForm, setProgressForm] = useState(null);
+  const [progressError, setProgressError] = useState("");
+  const [savingProgress, setSavingProgress] = useState(false);
+  const canUpdateProgress = ["admin", "manager", "engineer"].includes(user.role);
 
   const loadDashboard = () =>
     apiFetch(`${API}/dashboard`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setData).catch(() => setData(null));
 
   useEffect(() => { loadDashboard(); }, []);
+
+  useEffect(() => {
+    if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
+    let active = true;
+    setTasksError("");
+    apiFetch(`${API}/cong-viec`)
+      .then(response => {
+        if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
+        return response.json();
+      })
+      .then(tasks => { if (active) setTaskData(tasks); })
+      .catch(error => { if (active) setTasksError(error.message); });
+    return () => { active = false; };
+  }, [page]);
+
+  function openProgressForm(task) {
+    setSelectedTask(task);
+    setProgressForm({
+      ngay_bat_dau_thuc_te: task.ngay_bat_dau_thuc_te || "",
+      ngay_ket_thuc_thuc_te: task.ngay_ket_thuc_thuc_te || "",
+      phan_tram_hoan_thanh: String(task.phan_tram_hoan_thanh ?? 0),
+      category_id: task.category_id == null ? "" : String(task.category_id),
+    });
+    setProgressError("");
+  }
+
+  async function saveProgress(event) {
+    event.preventDefault();
+    setProgressError("");
+    if (
+      progressForm.ngay_bat_dau_thuc_te &&
+      progressForm.ngay_ket_thuc_thuc_te &&
+      progressForm.ngay_ket_thuc_thuc_te < progressForm.ngay_bat_dau_thuc_te
+    ) {
+      setProgressError("Ngày kết thúc thực tế không được trước ngày bắt đầu thực tế.");
+      return;
+    }
+    const completion = Number(progressForm.phan_tram_hoan_thanh);
+    if (!Number.isInteger(completion) || completion < 0 || completion > 100) {
+      setProgressError("Phần trăm hoàn thành phải là số nguyên từ 0 đến 100.");
+      return;
+    }
+
+    setSavingProgress(true);
+    try {
+      const response = await apiFetch(`${API}/cong-viec/${selectedTask.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ngay_bat_dau_thuc_te: progressForm.ngay_bat_dau_thuc_te || null,
+          ngay_ket_thuc_thuc_te: progressForm.ngay_ket_thuc_thuc_te || null,
+          phan_tram_hoan_thanh: completion,
+          ...(canManageCategories
+            ? { category_id: progressForm.category_id ? Number(progressForm.category_id) : null }
+            : {}),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Không thể cập nhật tiến độ.");
+      setTaskData(current => current.map(task => task.id === result.id ? result : task));
+      setSelectedTask(null);
+      setProgressForm(null);
+    } catch (error) {
+      setProgressError(error.message || "Không thể kết nối máy chủ.");
+    } finally {
+      setSavingProgress(false);
+    }
+  }
+
+  const canManageCategories = ["admin", "manager"].includes(user.role);
+
+  useEffect(() => {
+    if (page !== "Công việc") return;
+    let active = true;
+    apiFetch(`${API}/categories`)
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "Không thể tải danh sách hạng mục.");
+        if (active) setCategoryOptions(flattenCategoryTree(result));
+      })
+      .catch(error => {
+        if (active) setTasksError(error.message || "Không thể tải danh sách hạng mục.");
+      });
+    return () => { active = false; };
+  }, [page]);
 
   return (
     <div className="app">
@@ -70,13 +175,26 @@ function App({ user, onLogout, onPasswordChanged }) {
 
         {page === "Tổng quan" ? <Dashboard data={data}/> :
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
-         page === "Tiến độ và đường găng" ? <SchedulePage user={user} /> :
-         page === "Công việc" ? <Tasks data={data?.cong_viec_hom_nay || []}/> :
+         page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
+         page === "Mốc bàn giao" ? <MilestoneAlerts/> :
+         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} canUnlock={["admin", "manager"].includes(user.role)}/> :
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
+        {selectedTask && progressForm && <ProgressFormModal
+          task={selectedTask}
+          form={progressForm}
+          setForm={setProgressForm}
+          error={progressError}
+          saving={savingProgress}
+          categories={categoryOptions}
+          canAssignCategory={canUpdateProgress}
+          onSave={saveProgress}
+          onClose={() => setSelectedTask(null)}
+        />}
       </main>
     </div>
   );
@@ -234,17 +352,79 @@ function Projects({data, refresh, canManage}) {
   );
 }
 
-function Tasks({data}) {
+function Tasks({data, canUpdate, onOpenProgress, error}) {
   return (
     <div className="content">
       <div className="page-title">
         <div>
           <h1>Quản lý công việc</h1>
-          <p>Theo dõi nhiệm vụ và người phụ trách tại công trường.</p>
+          <p>Theo dõi kế hoạch và cập nhật riêng ngày, phần trăm hoàn thành thực tế.</p>
         </div>
-        <button className="primary"><Plus size={18}/> Thêm công việc</button>
       </div>
-      <Table data={data} columns={["ten","cong_trinh","nguoi_phu_trach","trang_thai","han"]} headers={["Công việc","Công trình","Người phụ trách","Trạng thái","Hạn"]}/>
+      {error && <div className="alert" role="alert">{error}</div>}
+      <section className="panel table-panel">
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Công việc</th><th>Công trình</th><th>Người phụ trách</th>
+              <th>Trạng thái kế hoạch</th><th>Hạn kế hoạch</th>
+              <th>Bắt đầu thực tế</th><th>Kết thúc thực tế</th>
+              <th>Hoàn thành thực tế</th>{canUpdate && <th>Thao tác</th>}
+            </tr></thead>
+            <tbody>
+              {data.map(task => <tr key={task.id}>
+                <td>{task.ten}</td><td>{task.cong_trinh}</td><td>{task.nguoi_phu_trach}</td>
+                <td><Status value={task.trang_thai}/></td><td>{task.han || "—"}</td>
+                <td>{task.ngay_bat_dau_thuc_te || "—"}</td>
+                <td>{task.ngay_ket_thuc_thuc_te || "—"}</td>
+                <td><div className="actual-progress">
+                  <div className="bar"><i style={{ width: `${task.phan_tram_hoan_thanh}%` }}/></div>
+                  <span>{task.phan_tram_hoan_thanh}%</span>
+                </div></td>
+                {canUpdate && <td><button className="btn btn-primary" onClick={() => onOpenProgress(task)}>Cập nhật</button></td>}
+              </tr>)}
+              {!data.length && <tr><td colSpan={canUpdate ? 9 : 8}>Chưa có công việc.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  );
+}
+
+function ProgressFormModal({task, form, setForm, error, saving, categories, canAssignCategory, onSave, onClose}) {
+  return (
+    <div className="modal-bg" onMouseDown={event => {
+      if (event.target === event.currentTarget && !saving) onClose();
+    }}>
+      <form className="modal progress-modal" onSubmit={onSave} aria-labelledby="progress-modal-title">
+        <div className="modal-head">
+          <div><h2 id="progress-modal-title">Cập nhật tiến độ thực tế</h2><p>{task.ten}</p></div>
+          <button type="button" aria-label="Đóng" disabled={saving} onClick={onClose}>✕</button>
+        </div>
+        <p className="progress-plan-note">Kế hoạch: hạn {task.han || "chưa có"} · trạng thái {task.trang_thai}. Cập nhật này không thay đổi kế hoạch.</p>
+        {canAssignCategory && <label>Hạng mục
+          <select value={form.category_id} onChange={event => setForm({ ...form, category_id: event.target.value })}>
+            <option value="">Không gán hạng mục</option>
+            {categories.map(category => <option value={category.id} key={category.id}>{category.name}</option>)}
+          </select>
+        </label>}
+        <label>Ngày bắt đầu thực tế
+          <input type="date" value={form.ngay_bat_dau_thuc_te} onChange={event => setForm({ ...form, ngay_bat_dau_thuc_te: event.target.value })}/>
+        </label>
+        <label>Ngày kết thúc thực tế
+          <input type="date" min={form.ngay_bat_dau_thuc_te || undefined} value={form.ngay_ket_thuc_thuc_te} onChange={event => setForm({ ...form, ngay_ket_thuc_thuc_te: event.target.value })}/>
+        </label>
+        <label>Hoàn thành thực tế (%)
+          <input type="number" min="0" max="100" step="1" required value={form.phan_tram_hoan_thanh} onChange={event => setForm({ ...form, phan_tram_hoan_thanh: event.target.value })}/>
+        </label>
+        {error && <div className="alert" role="alert">{error}</div>}
+        <div className="progress-form-actions">
+          <button className="btn btn-primary" disabled={saving}>{saving ? "Đang lưu…" : "Lưu tiến độ"}</button>
+          <button className="btn" type="button" disabled={saving} onClick={onClose}>Hủy</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -265,127 +445,187 @@ function Materials() {
 }
 
 function Diary({canWrite, canUnlock}) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [project, setProject] = useState("");
+  const [diaryDate, setDiaryDate] = useState(today);
+  const [taskFilter, setTaskFilter] = useState("");
   const [entries, setEntries] = useState([]);
-  const [show, setShow] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ ngay: new Date().toLocaleDateString("en-CA"), cong_trinh: "", noi_dung: "" });
-  const [unlockDay, setUnlockDay] = useState("");
-  const [reason, setReason] = useState("");
-  const [auditDay, setAuditDay] = useState("");
-  const [audit, setAudit] = useState([]);
+  const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+  const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockedBy, setLockedBy] = useState("");
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [audit, setAudit] = useState([]);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
 
-  async function loadEntries() {
-    const response = await apiFetch(`${API}/nhat-ky`);
-    if (response.ok) setEntries(await response.json());
-  }
-  useEffect(() => { loadEntries().catch(() => setError("Không thể tải nhật ký.")); }, []);
+  useEffect(() => {
+    Promise.all([apiFetch(`${API}/cong-trinh`).then(r => r.json()), apiFetch(`${API}/cong-viec`).then(r => r.json())])
+      .then(([projectList, taskList]) => {
+        setProjects(projectList);
+        setTasks(taskList);
+        setProject(projectList[0]?.ten || "");
+      })
+      .catch(() => setError("Không tải được danh sách công trình và hạng mục."));
+  }, []);
 
-  function startAdd() {
-    setEditing(null);
-    setForm({ ngay: new Date().toLocaleDateString("en-CA"), cong_trinh: "", noi_dung: "" });
-    setError(""); setShow(true);
-  }
+  const projectTasks = tasks.filter(task => task.cong_trinh === project);
+  const loadEntries = () => {
+    if (!project || !diaryDate) return;
+    const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
+    if (taskFilter) query.set("cong_viec_id", taskFilter);
+    apiFetch(`${API}/nhat-ky?${query}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Không tải được nhật ký.");
+        setEntries(payload);
+      })
+      .catch(e => setError(e.message));
+  };
+  useEffect(() => { loadEntries(); }, [project, diaryDate, taskFilter]);
 
-  function startEdit(entry) {
-    setEditing(entry);
-    setForm({ ngay: entry.ngay, cong_trinh: entry.cong_trinh, noi_dung: entry.noi_dung });
-    setError(""); setShow(true);
-  }
+  useEffect(() => {
+    if (!project || !diaryDate) return;
+    const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
+    apiFetch(`${API}/nhat-ky/thong-tin-ngay?${query}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Không tải được thông tin trong ngày.");
+        const day = payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", is_locked: false};
+        setSummary(day);
+        setIsLocked(Boolean(day.is_locked));
+        setLockedBy(day.khoa_boi || "");
+      })
+      .catch(e => setError(e.message));
+  }, [project, diaryDate]);
 
   async function saveEntry(event) {
-    event.preventDefault(); setError(""); setMessage("");
-    const response = await apiFetch(editing ? `${API}/nhat-ky/${editing.id}` : `${API}/nhat-ky`, {
-      method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(editing ? { cong_trinh: form.cong_trinh, noi_dung: form.noi_dung } : form),
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setSaving(true);
+    try {
+      const response = await apiFetch(editing ? `${API}/nhat-ky/${editing.id}` : `${API}/nhat-ky`, {
+        method: editing ? "PATCH" : "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...form, cong_trinh: project, ngay: diaryDate, cong_viec_id: Number(form.cong_viec_id)}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
+      setForm(current => ({...current, noi_dung: ""}));
+      setEditing(null);
+      setNotice(editing ? "Đã cập nhật mục nhật ký." : "Đã thêm mục nhật ký.");
+      loadEntries();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveSummary(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`${API}/nhat-ky/thong-tin-ngay`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...summary, cong_trinh: project, ngay: diaryDate,
+          nhan_luc_so_nguoi: summary.nhan_luc_so_nguoi === "" ? null : Number(summary.nhan_luc_so_nguoi)}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Không thể lưu thông tin trong ngày.");
+      setSummary(payload);
+      setNotice("Đã cập nhật nhân lực, thiết bị và thời tiết.");
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function lockDay() {
+    if (!window.confirm(`Khóa sổ nhật ký ${project} ngày ${diaryDate}?`)) return;
+    const response = await apiFetch(`${API}/nhat-ky/ngay/${diaryDate}/lock`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cong_trinh: project, ngay: diaryDate}),
     });
     const result = await response.json();
-    if (!response.ok) { setError(result.message || "Không thể lưu nhật ký."); return; }
-    setShow(false); setMessage(editing ? "Đã cập nhật nhật ký." : "Đã ghi nhật ký."); await loadEntries();
-  }
-
-  async function lockDay(day) {
-    if (!window.confirm(`Khóa sổ nhật ký ngày ${day}? Sau khi khóa, nhật ký ngày này sẽ không thể chỉnh sửa.`)) return;
-    setError(""); setMessage("");
-    const response = await apiFetch(`${API}/nhat-ky/ngay/${day}/lock`, { method: "POST" });
-    const result = await response.json();
     if (!response.ok) { setError(result.message || "Không thể khóa nhật ký."); return; }
-    setMessage(`Đã khóa sổ nhật ký ngày ${day}.`); await loadEntries();
+    setIsLocked(true); setLockedBy(result.khoa_boi || "");
+    setNotice("Đã khóa sổ nhật ký ngày này.");
   }
 
-  async function unlock(day) {
-    setError(""); setMessage("");
-    const response = await apiFetch(`${API}/nhat-ky/ngay/${day}/unlock`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ly_do: reason }),
+  async function unlockDay(event) {
+    event.preventDefault();
+    const response = await apiFetch(`${API}/nhat-ky/ngay/${diaryDate}/unlock`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cong_trinh: project, ly_do: reason}),
     });
     const result = await response.json();
     if (!response.ok) { setError(result.message || "Không thể mở khóa nhật ký."); return; }
-    setUnlockDay(""); setReason(""); setMessage(`Đã mở khóa nhật ký ngày ${day}.`); await loadEntries();
+    setIsLocked(false); setLockedBy(""); setReason(""); setUnlockOpen(false);
+    setNotice("Đã mở khóa nhật ký.");
   }
 
-  async function openAudit(day) {
-    const response = await apiFetch(`${API}/nhat-ky/audit?ngay=${encodeURIComponent(day)}`);
-    if (!response.ok) return;
-    setAudit(await response.json()); setAuditDay(day);
+  async function showAudit() {
+    const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
+    const response = await apiFetch(`${API}/nhat-ky/audit?${query}`);
+    const result = await response.json();
+    if (!response.ok) { setError(result.message || "Không tải được lịch sử."); return; }
+    setAudit(result); setAuditOpen(true);
   }
-
-  const groups = Object.values(entries.reduce((result, entry) => {
-    (result[entry.ngay] ||= { day: entry.ngay, locked: entry.is_locked, lockedBy: entry.khoa_boi, lockedAt: entry.khoa_luc, entries: [] }).entries.push(entry);
-    return result;
-  }, {}));
 
   return (
     <div className="content">
       <div className="page-title">
         <div>
           <h1>Nhật ký thi công</h1>
-          <p>Ghi nhận và khóa sổ nhật ký theo ngày sau khi xác nhận.</p>
+          <p>Ghi nhận hoạt động theo công trình, ngày và hạng mục công việc.</p>
         </div>
-        {canWrite && <button className="primary" onClick={startAdd}><Plus size={18}/> Ghi nhật ký</button>}
       </div>
-      {message && <div className="success" role="status">{message}</div>}{error && <div className="alert" role="alert">{error}</div>}
-      <section className="panel table-panel diary-panel">
-        <div className="table-wrap"><table>
-          <thead><tr><th>Công trình</th><th>Nội dung</th><th>Người lập</th><th>Thao tác</th></tr></thead>
-          <tbody>{groups.length === 0 ? <tr><td colSpan="4" className="diary-empty">Chưa có nhật ký.</td></tr> : groups.map(group => <React.Fragment key={group.day}>
-            <tr className={group.locked ? "diary-day locked" : "diary-day"}>
-              <td colSpan="4"><div className="diary-day-head">
-                <div className="diary-date"><CalendarDays size={15}/><b>{group.day}</b>{group.locked ? <span className="lock-badge"><LockKeyhole size={13}/> Đã khóa</span> : <span className="open-badge">Đang mở</span>}
-                  {group.locked && <small>Khóa bởi {group.lockedBy}</small>}
-                </div>
-                <div className="diary-actions">
-                  {group.locked ? canUnlock && <button className="text-btn" onClick={() => { setUnlockDay(group.day); setReason(""); setError(""); }}><UnlockKeyhole size={14}/> Mở khóa</button> : canWrite && <button className="text-btn" onClick={() => lockDay(group.day)}><LockKeyhole size={14}/> Khóa ngày</button>}
-                  {canUnlock && <button className="text-btn" onClick={() => openAudit(group.day)}><History size={14}/> Lịch sử</button>}
-                </div>
-              </div></td>
-            </tr>
-            {group.entries.map(entry => <tr key={entry.id}>
-              <td>{entry.cong_trinh}</td><td className="diary-content">{entry.noi_dung}</td><td>{entry.nguoi_lap}</td>
-              <td>{canWrite && <button className="row-action" disabled={group.locked} title={group.locked ? "Ngày đã khóa" : "Sửa nhật ký"} onClick={() => startEdit(entry)}><Pencil size={15}/></button>}</td>
-            </tr>)}
-          </React.Fragment>)}</tbody>
-        </table></div>
+      <section className="panel diary-panel">
+        <div className="diary-filters">
+          <label>Công trình<select value={project} onChange={e => setProject(e.target.value)}>{projects.map(item => <option key={item.id} value={item.ten}>{item.ten}</option>)}</select></label>
+          <label>Ngày<input type="date" value={diaryDate} onChange={e => setDiaryDate(e.target.value)}/></label>
+          <label>Lọc theo hạng mục<select value={taskFilter} onChange={e => setTaskFilter(e.target.value)}><option value="">Tất cả hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
+        </div>
       </section>
-      {show && <div className="modal-bg"><form className="modal" onSubmit={saveEntry}>
-        <div className="modal-head"><h2>{editing ? "Sửa nhật ký" : "Ghi nhật ký"}</h2><button type="button" onClick={() => setShow(false)}>✕</button></div>
-        {!editing && <label>Ngày nhật ký<input type="date" required value={form.ngay} onChange={e => setForm({ ...form, ngay: e.target.value })}/></label>}
-        <label>Công trình<input required maxLength="255" value={form.cong_trinh} onChange={e => setForm({ ...form, cong_trinh: e.target.value })}/></label>
-        <label>Nội dung<textarea required maxLength="10000" rows="5" value={form.noi_dung} onChange={e => setForm({ ...form, noi_dung: e.target.value })}/></label>
-        {error && <div className="alert" role="alert">{error}</div>}
-        <div className="modal-actions"><button className="btn btn-primary">Lưu nhật ký</button><button type="button" className="btn" onClick={() => setShow(false)}>Hủy</button></div>
-      </form></div>}
-      {unlockDay && <div className="modal-bg"><form className="modal" onSubmit={e => { e.preventDefault(); unlock(unlockDay); }}>
-        <div className="modal-head"><h2>Mở khóa nhật ký</h2><button type="button" onClick={() => setUnlockDay("")}>✕</button></div>
-        <p className="modal-note">Nhật ký ngày {unlockDay} sẽ cho phép chỉnh sửa trở lại.</p>
-        <label>Lý do mở khóa<input required maxLength="500" value={reason} onChange={e => setReason(e.target.value)} placeholder="Nhập lý do mở khóa"/></label>
-        {error && <div className="alert" role="alert">{error}</div>}
-        <div className="modal-actions"><button className="btn btn-primary">Mở khóa</button><button type="button" className="btn" onClick={() => setUnlockDay("")}>Hủy</button></div>
-      </form></div>}
-      {auditDay && <div className="modal-bg"><div className="modal audit-modal">
-        <div className="modal-head"><h2>Lịch sử nhật ký {auditDay}</h2><button onClick={() => setAuditDay("")}>✕</button></div>
-        {audit.length ? <div className="audit-list">{audit.map(item => <div className="audit-row" key={item.id}><b>{item.hanh_dong === "lock" ? "Khóa sổ" : "Mở khóa"}</b><span>{item.thuc_hien_boi} · {new Date(item.thuc_hien_luc).toLocaleString("vi-VN")}</span>{item.ly_do && <small>Lý do: {item.ly_do}</small>}</div>)}</div> : <p className="modal-note">Chưa có thao tác khóa/mở khóa.</p>}
-      </div></div>}
+      <section className="panel daily-summary">
+        <div className="panel-head"><div><h2>Tình hình trong ngày</h2><p>Nhân lực, thiết bị sử dụng và thời tiết tại công trường.</p><p>{isLocked ? `Đã khóa sổ${lockedBy ? ` bởi ${lockedBy}` : ""}` : "Đang mở"}</p></div><div className="diary-lock-actions">{isLocked ? canUnlock && <button type="button" className="text-btn" onClick={() => {setReason(""); setUnlockOpen(true);}}>Mở khóa</button> : canWrite && <button type="button" className="text-btn" onClick={lockDay}>Khóa sổ ngày</button>}{canUnlock && <button type="button" className="text-btn" onClick={showAudit}>Lịch sử</button>}</div></div>
+        {canWrite && !isLocked ? <form onSubmit={saveSummary} className="summary-form">
+          <label>Số nhân lực<input type="number" min="0" max="10000" value={summary.nhan_luc_so_nguoi ?? ""} onChange={e => setSummary({...summary, nhan_luc_so_nguoi: e.target.value})} placeholder="Nhập số người"/></label>
+          <label>Ghi chú nhân lực<input maxLength={2000} value={summary.nhan_luc_ghi_chu || ""} onChange={e => setSummary({...summary, nhan_luc_ghi_chu: e.target.value})} placeholder="Ví dụ: 2 tổ thi công, 1 cán bộ giám sát"/></label>
+          <label>Thiết bị sử dụng<textarea rows={2} maxLength={4000} value={summary.thiet_bi || ""} onChange={e => setSummary({...summary, thiet_bi: e.target.value})} placeholder="Tên thiết bị và tình trạng sử dụng"/></label>
+          <label>Thời tiết<select value={summary.thoi_tiet || ""} onChange={e => setSummary({...summary, thoi_tiet: e.target.value})}><option value="">Chưa ghi nhận</option><option>Nắng</option><option>Nhiều mây</option><option>Mưa</option><option>Khác</option></select></label>
+          <label>Ghi chú thời tiết<input maxLength={2000} value={summary.ghi_chu_thoi_tiet || ""} onChange={e => setSummary({...summary, ghi_chu_thoi_tiet: e.target.value})} placeholder="Mô tả ảnh hưởng đến thi công"/></label>
+          <button className="primary">Lưu tình hình ngày</button>
+        </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
+      </section>
+      {canWrite && !isLocked && <form className="panel diary-form" onSubmit={saveEntry}>
+        <div className="panel-head"><div><h2>{editing ? "Sửa mục nhật ký" : "Thêm mục nhật ký"}</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div>{editing && <button type="button" className="text-btn" onClick={() => {setEditing(null); setForm({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});}}>Hủy sửa</button>}</div>
+        <div className="diary-form-fields">
+          <label>Hạng mục<select required value={form.cong_viec_id} onChange={e => setForm({...form, cong_viec_id: e.target.value})}><option value="">Chọn hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
+          <label>Thời gian<input required type="time" value={form.gio} onChange={e => setForm({...form, gio: e.target.value})}/></label>
+          <label className="diary-description">Mô tả công việc<textarea required maxLength={5000} rows={3} value={form.noi_dung} onChange={e => setForm({...form, noi_dung: e.target.value})} placeholder="Mô tả công việc đã thực hiện..."/></label>
+          <button className="primary" disabled={saving || !projectTasks.length}>{saving ? "Đang lưu..." : "Lưu nhật ký"}</button>
+        </div>
+      </form>}
+      {error && <div className="alert" role="alert">{error}</div>}
+      {notice && <div className="success" role="status">{notice}</div>}
+      <section className="panel diary-list">
+        <div className="panel-head"><div><h2>Nhật ký ngày {diaryDate}</h2><p>{project || "Đang tải công trình"}</p></div></div>
+        {entries.length ? <div className="diary-entries">{entries.map(entry => <article className="diary-entry" key={entry.id}>
+          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small></div>{canWrite && !isLocked && <button type="button" className="text-btn" onClick={() => {setEditing(entry); setForm({cong_viec_id: String(entry.cong_viec_id), gio: entry.gio, noi_dung: entry.noi_dung}); window.scrollTo({top: 0, behavior: "smooth"});}}>Sửa</button>}
+        </article>)}</div> : <p className="diary-empty">Chưa có mục nhật ký cho bộ lọc này.</p>}
+      </section>
+      {unlockOpen && <div className="modal-bg"><form className="modal" onSubmit={unlockDay}><div className="modal-head"><h2>Mở khóa nhật ký</h2><button type="button" onClick={() => setUnlockOpen(false)}>✕</button></div><p className="modal-note">{project} · {diaryDate}</p><label>Lý do mở khóa<input required maxLength="500" value={reason} onChange={e => setReason(e.target.value)} placeholder="Nhập lý do"/></label><div className="modal-actions"><button className="btn btn-primary">Mở khóa</button><button type="button" className="btn" onClick={() => setUnlockOpen(false)}>Hủy</button></div></form></div>}
+      {auditOpen && <div className="modal-bg"><div className="modal audit-modal"><div className="modal-head"><h2>Lịch sử khóa sổ</h2><button type="button" onClick={() => setAuditOpen(false)}>✕</button></div>{audit.length ? <div className="audit-list">{audit.map(item => <div className="audit-row" key={item.id}><b>{item.hanh_dong === "lock" ? "Khóa sổ" : "Mở khóa"}</b><span>{item.thuc_hien_boi} · {new Date(item.thuc_hien_luc).toLocaleString("vi-VN")}</span>{item.ly_do && <small>Lý do: {item.ly_do}</small>}</div>)}</div> : <p className="modal-note">Chưa có thao tác khóa/mở khóa.</p>}</div></div>}
     </div>
   );
 }
@@ -523,7 +763,17 @@ function Placeholder({title}) {
   );
 }
 
-function SchedulePage({ user }) {
+function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
+  const chartTasks = tasks
+    .filter(task => Number.isInteger(task.es) && Number.isInteger(task.ef))
+    .map(task => ({
+      ...task,
+      name: task.ten,
+      totalFloat: task.total_float,
+      isCritical: Boolean(task.is_critical),
+      actualTask: task,
+    }));
+
   return (
     <div className="content">
       <div className="page-title">
@@ -532,7 +782,12 @@ function SchedulePage({ user }) {
           <p>Sơ đồ Gantt, đường găng và độ trễ của từng công việc.</p>
         </div>
       </div>
-      <GanttChart data={scheduleData} />
+      {error && <div className="alert" role="alert">{error}</div>}
+      {canUpdate && <p className="progress-plan-note">Chọn thanh công việc để cập nhật tiến độ thực tế. Phần màu xanh thể hiện tỷ lệ đã hoàn thành.</p>}
+      <GanttChart
+        data={chartTasks}
+        onTaskSelect={canUpdate ? onOpenProgress : undefined}
+      />
     </div>
   );
 }

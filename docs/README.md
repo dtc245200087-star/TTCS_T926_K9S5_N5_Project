@@ -16,9 +16,9 @@
 1. Tại thư mục dự án, sao chép `.env.example` thành `.env`.
 2. Đổi `SECRET_KEY` thành giá trị ngẫu nhiên riêng và đặt `INITIAL_ADMIN_PASSWORD` thành mật khẩu quản trị mạnh, tối thiểu 12 ký tự.
 3. Chạy `docker compose up --build`.
-4. Mở `http://localhost:5173` và đăng nhập bằng tên trong `INITIAL_ADMIN_USERNAME` cùng mật khẩu vừa đặt.
+4. Mở `http://localhost:5174` và đăng nhập bằng tên trong `INITIAL_ADMIN_USERNAME` cùng mật khẩu vừa đặt.
 
-SQLite nằm trong volume `backend_data`, nên tài khoản và nhật ký thi công không mất khi dựng lại container. Biến `INITIAL_ADMIN_PASSWORD` chỉ dùng khi cơ sở dữ liệu chưa có tài khoản; đổi biến này sau đó không đổi mật khẩu đã lưu. Hãy dùng HTTPS và đặt `COOKIE_SECURE=true` khi triển khai qua HTTPS.
+SQLite nằm trong volume `backend_data`, nên tài khoản không mất khi dựng lại container. Biến `INITIAL_ADMIN_PASSWORD` chỉ dùng khi cơ sở dữ liệu chưa có tài khoản; đổi biến này sau đó không đổi mật khẩu đã lưu. Hãy dùng HTTPS và đặt `COOKIE_SECURE=true` khi triển khai qua HTTPS.
 
 ## Chạy trực tiếp trên Windows PowerShell
 
@@ -59,13 +59,42 @@ Mở `http://localhost:5173`. Cơ sở dữ liệu tài khoản cục bộ đư�
 
 API trả `401` nếu chưa đăng nhập, `403` nếu tài khoản không đủ quyền và yêu cầu `X-CSRF-Token` trên mọi yêu cầu thay đổi dữ liệu. Cookie phiên là HttpOnly, SameSite=Lax; mật khẩu được băm trước khi ghi SQLite. Quản trị viên cuối cùng không thể bị khóa/hạ quyền, và người dùng không thể tự khóa hoặc tự hạ quyền.
 
-## Khóa sổ nhật ký theo ngày
+## Cập nhật tiến độ thực tế
 
-- `GET /api/nhat-ky` — xem nhật ký và trạng thái khóa của từng ngày.
-- `POST /api/nhat-ky` — ghi nhật ký; ngày khóa sổ trả về `423`.
-- `PATCH /api/nhat-ky/<id>` — sửa công trình/nội dung; ngày khóa sổ trả về `423`.
-- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/lock` — khóa sổ; yêu cầu vai trò `engineer`, `manager` hoặc `admin`.
-- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/unlock` — mở khóa; chỉ `manager` hoặc `admin`, bắt buộc gửi `{"ly_do":"..."}` (tối đa 500 ký tự).
-- `GET /api/nhat-ky/audit?ngay=<YYYY-MM-DD>` — xem lịch sử khóa/mở khóa; chỉ `manager` hoặc `admin`.
+Trong mục **Công việc**, quản trị viên, quản lý công trình và kỹ sư có thể mở form bằng nút **Cập nhật**. Mục **Tiến độ và đường găng** dùng cùng dữ liệu `GET /api/cong-viec`; chọn thanh của một công việc trong cơ sở dữ liệu sẽ mở cùng form cập nhật. Tiến độ thực tế được tô màu trên thanh Gantt. Dữ liệu kế hoạch của biểu đồ (ES, EF, LS, LF, độ trễ và trạng thái đường găng) được lưu cùng công việc và không bị thay đổi khi cập nhật tiến độ thực tế. Công việc không có bản ghi tương ứng không thể sửa. Ngày kết thúc không được trước ngày bắt đầu; máy chủ và SQLite cùng kiểm tra các ràng buộc này.
 
-Trạng thái khóa được kiểm tra trong giao dịch SQLite ở máy chủ khi ghi hoặc sửa, nên ẩn nút trên giao diện không phải là biện pháp bảo vệ duy nhất. Lý do, người thực hiện và thời điểm mở khóa được lưu trong bảng lịch sử.
+- `PATCH /api/cong-viec/<id>` — cập nhật `ngay_bat_dau_thuc_te`, `ngay_ket_thuc_thuc_te` (ngày `YYYY-MM-DD` hoặc `null`) và `phan_tram_hoan_thanh` (số nguyên 0–100). Chỉ vai trò `admin`, `manager`, `engineer` được cập nhật.
+- `GET /api/cong-viec` — trả các trường tiến độ thực tế và kế hoạch Gantt để cả hai mục dùng chung dữ liệu.
+
+Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
+
+## Projects và cây work items
+
+Khi backend khởi động, migration phiên bản 1 tạo hai bảng `projects` và `work_items`. `work_items.project_id` tham chiếu project; `work_items.parent_id` tạo quan hệ cha-con trong cùng project. Cơ sở dữ liệu kiểm tra khóa ngoại, ngăn chu trình cha-con và có chỉ mục trên `parent_id`. Model `app.models.project_work_items.get_work_item_tree()` dùng CTE đệ quy và trả về cây lồng nhau gồm hạng mục được yêu cầu cùng tất cả cấp con.
+
+Các bảng này được bổ sung độc lập để không làm thay đổi hoặc sao chép dữ liệu đang được các luồng hiện hữu sử dụng trong `cong_viec`, `categories` và danh sách công trình cũ. Chúng không tự đồng bộ với các bảng/luồng legacy.
+
+Có thể hoàn tác migration bằng `app.migrations.downgrade_database(database_path, target_version=0)`. Lưu ý: hoàn tác phiên bản 1 sẽ xóa các bảng `work_items` và `projects` cùng dữ liệu của chúng; các bảng legacy không bị xóa.
+
+## Benchmark S-13 (T-29)
+
+Trên Windows 11 với Chrome, biểu đồ SVG hiển thị 500 thanh trong **0,101 giây**. Khi cuộn ngang, FPS đo được là **22,8 FPS ở giữa biểu đồ** và **1,2 FPS ở đoạn cuối danh sách**, cho thấy cuộn chưa mượt ở quy mô 500 công việc dù thời gian render ban đầu nhanh. Đây là trường hợp cực đoan; với khoảng 20–50 công việc dự kiến trong dự án, tiếp tục giữ SVG. Tối ưu bằng Canvas hoặc virtualize có thể xem xét trong task mở rộng sau.
+
+## Hạng mục và mốc bàn giao
+
+Mục **Hạng mục** cho phép quản trị viên và quản lý công trình tạo cây hạng mục, gán công việc, và khai báo chuỗi phụ thuộc giữa các công việc. Người có quyền cập nhật tiến độ cũng có thể chọn hạng mục trong form **Cập nhật tiến độ thực tế**; lựa chọn này được lưu vào `cong_viec.category_id`. Khi chuyển công việc sang hạng mục khác, các liên kết phụ thuộc cũ của công việc đó được xóa để tránh giữ lại chuỗi không còn cùng hạng mục.
+
+Đặt ngày bắt đầu kế hoạch cho mỗi hạng mục. Các giá trị `ES`/`EF` hiện được lưu theo số ngày tính từ mốc bắt đầu này; ngày kết thúc sớm dự kiến được tính bằng ngày bắt đầu cộng `EF`. Mục **Mốc bàn giao** hiển thị cảnh báo khi ngày này sau hạn bàn giao, cùng chuỗi phụ thuộc gây chậm. Chi tiết cảnh báo chỉ trả về tên công việc, không trả mã công việc.
+
+Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng mục, quan hệ công việc và mốc bàn giao. Các tài khoản đã đăng nhập khác có thể xem cây, mốc và cảnh báo. Cơ sở dữ liệu hiện có tự động được bổ sung cột `category_id` cùng các bảng `categories`, `category_tasks`, `task_dependencies` và `milestones` khi backend khởi động.
+
+Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
+
+## Khóa sổ nhật ký theo công trình và ngày (SCRUM-34)
+
+- `GET /api/nhat-ky` trả trạng thái khóa sổ cùng từng mục nhật ký.
+- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/lock` khóa nhật ký cho công trình và ngày được gửi trong JSON `cong_trinh` và `ngay`.
+- `POST /api/nhat-ky/ngay/<YYYY-MM-DD>/unlock` mở khóa; chỉ `manager` hoặc `admin`, bắt buộc gửi `cong_trinh` và `ly_do` (tối đa 500 ký tự).
+- `GET /api/nhat-ky/audit?cong_trinh=<tên>&ngay=<YYYY-MM-DD>` xem lịch sử khóa/mở khóa; chỉ `manager` hoặc `admin`.
+
+Máy chủ kiểm tra trạng thái khóa trong giao dịch SQLite trước khi thêm, sửa mục nhật ký hoặc cập nhật thông tin ngày. Khi khóa, các thao tác ghi trả `423`; lịch sử ghi lại người thực hiện, thời điểm và lý do mở khóa.
