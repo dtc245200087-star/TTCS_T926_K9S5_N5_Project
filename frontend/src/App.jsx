@@ -1,15 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
   Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle,
-  Menu, X, TrendingUp
+  Menu, X, TrendingUp, UploadCloud, RotateCw
 } from "lucide-react";
 import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
 import CategoryTree from "./components/CategoryTree.jsx";
 import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
+import { sortTasksByDependencies } from "./dependencies.js";
 import "./milestone.css";
+import "./task-progress.css";
+import S06DependencyPage from "./components/S06DependencyPage.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -28,6 +31,7 @@ const menu = [
   ["Hạng mục", ClipboardList],
   ["Mốc bàn giao", CalendarDays],
   ["Công việc", ClipboardList],
+  ["Quan hệ phụ thuộc (S-06)", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
   ["Nhân sự", Users],
   ["Vật tư", Package],
@@ -37,12 +41,68 @@ const menu = [
   ["Cài đặt", Settings],
 ];
 
+function blobFromCanvas(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      blob => blob ? resolve(blob) : reject(new Error("Không thể tạo ảnh đã nén.")),
+      "image/jpeg",
+      quality,
+    );
+  });
+}
+
+async function compressDiaryImage(file) {
+  const bitmap = await createImageBitmap(file);
+  let scale = Math.min(1, 2560 / Math.max(bitmap.width, bitmap.height));
+  let compressedBlob;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Trình duyệt không hỗ trợ xử lý ảnh.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    compressedBlob = await blobFromCanvas(canvas, Math.max(0.5, 0.86 - attempt * 0.06));
+    if (compressedBlob.size < 1024 * 1024) break;
+    scale *= 0.82;
+  }
+  bitmap.close();
+  if (!compressedBlob || compressedBlob.size >= 1024 * 1024) {
+    throw new Error("Không thể nén ảnh xuống dưới 1 MB.");
+  }
+
+  const compressedBitmap = await createImageBitmap(compressedBlob);
+  const thumbnailScale = Math.min(1, 360 / Math.max(compressedBitmap.width, compressedBitmap.height));
+  const thumbnailCanvas = document.createElement("canvas");
+  thumbnailCanvas.width = Math.max(1, Math.round(compressedBitmap.width * thumbnailScale));
+  thumbnailCanvas.height = Math.max(1, Math.round(compressedBitmap.height * thumbnailScale));
+  const thumbnailContext = thumbnailCanvas.getContext("2d");
+  if (!thumbnailContext) throw new Error("Không thể tạo ảnh xem trước.");
+  thumbnailContext.drawImage(compressedBitmap, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
+  compressedBitmap.close();
+  const thumbnailBlob = await blobFromCanvas(thumbnailCanvas, 0.72);
+  if (thumbnailBlob.size > 150 * 1024) {
+    throw new Error("Không thể tối ưu ảnh xem trước.");
+  }
+  return {compressedBlob, thumbnailBlob};
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 function App({ user, onLogout, onPasswordChanged }) {
   const [page, setPage] = useState("Tổng quan");
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
   const [taskData, setTaskData] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
+  const [scheduleData, setScheduleData] = useState({ schedule_results: [], has_cycle: false, message: "" });
   const [tasksError, setTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState(null);
   const [progressForm, setProgressForm] = useState(null);
@@ -57,14 +117,23 @@ function App({ user, onLogout, onPasswordChanged }) {
 
   useEffect(() => {
     if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
+    const loadSchedule = page === "Tiến độ và đường găng";
     let active = true;
     setTasksError("");
-    apiFetch(`${API}/cong-viec`)
+    apiFetch(`${API}/${loadSchedule ? "schedule-results" : "cong-viec"}`)
       .then(response => {
         if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
         return response.json();
       })
-      .then(tasks => { if (active) setTaskData(tasks); })
+      .then(result => {
+        if (!active) return;
+        if (loadSchedule) {
+          setTaskData(result.tasks);
+          setScheduleData(result);
+        } else {
+          setTaskData(result);
+        }
+      })
       .catch(error => { if (active) setTasksError(error.message); });
     return () => { active = false; };
   }, [page]);
@@ -177,8 +246,9 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
-         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
@@ -454,9 +524,108 @@ function Diary({canWrite}) {
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", mua_ca_ngay: false});
   const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
+  const [selectedImages, setSelectedImages] = useState([]);
+  const [pendingImageCompressions, setPendingImageCompressions] = useState(0);
+  const [imageNote, setImageNote] = useState("");
+  const [isDraggingImages, setIsDraggingImages] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
+  const previewUrls = useRef(new Set());
+  const pendingImageCompressionCount = useRef(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => () => {
+    for (const url of previewUrls.current) URL.revokeObjectURL(url);
+  }, []);
+
+  function releasePreview(url) {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    previewUrls.current.delete(url);
+  }
+
+  async function prepareImage(image) {
+    if (image.compressedBlob && image.thumbnailBlob) return image;
+    setSelectedImages(current => current.map(item =>
+      item.id === image.id ? {...item, status: "processing", error: ""} : item
+    ));
+    try {
+      const {compressedBlob, thumbnailBlob} = await compressDiaryImage(image.file);
+      const preview = URL.createObjectURL(thumbnailBlob);
+      previewUrls.current.add(preview);
+      releasePreview(image.preview);
+      const prepared = {...image, compressedBlob, thumbnailBlob, preview, status: "ready", error: ""};
+      setSelectedImages(current => current.map(item => item.id === image.id ? prepared : item));
+      return prepared;
+    } catch (compressionError) {
+      setSelectedImages(current => current.map(item =>
+        item.id === image.id
+          ? {...item, status: "error", error: compressionError.message || "Không thể nén ảnh."}
+          : item
+      ));
+      return null;
+    }
+  }
+
+  async function uploadImage(image, entryId) {
+    setSelectedImages(current => current.map(item =>
+      item.id === image.id ? {...item, status: "uploading", error: "", entryId} : item
+    ));
+    const timeoutController = new AbortController();
+    const timeoutId = window.setTimeout(() => timeoutController.abort(), 30000);
+    try {
+      const body = new FormData();
+      body.append("image", image.compressedBlob, "field-image.jpg");
+      body.append("thumbnail", image.thumbnailBlob, "field-thumbnail.jpg");
+      body.append("ghi_chu_anh", image.note || "");
+      body.append("upload_id", image.id);
+      const response = await apiFetch(`${API}/nhat-ky/${entryId}/images`, {
+        method: "POST",
+        body,
+        signal: timeoutController.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Tải ảnh thất bại.");
+      setEntries(current => current.map(entry => entry.id === entryId
+        ? {...entry, images: [...(entry.images || []), payload]}
+        : entry
+      ));
+      setSelectedImages(current => current.filter(item => item.id !== image.id));
+      releasePreview(image.preview);
+      return true;
+    } catch (uploadError) {
+      setSelectedImages(current => current.map(item =>
+        item.id === image.id
+          ? {
+            ...item,
+            status: "error",
+            entryId,
+            error: uploadError.name === "AbortError"
+              ? "Hết thời gian chờ. Kiểm tra mạng rồi tải lại."
+              : uploadError.message || "Lỗi mạng khi tải ảnh.",
+          }
+          : item
+      ));
+      return false;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  async function retryImage(image) {
+    const prepared = await prepareImage(image);
+    if (prepared?.entryId) await uploadImage(prepared, prepared.entryId);
+  }
+
+  function openLightbox(url, alt) {
+    setLightbox({url, alt});
+  }
+
+  function closeLightbox() {
+    if (lightbox?.objectUrl) releasePreview(lightbox.objectUrl);
+    setLightbox(null);
+  }
 
   useEffect(() => {
     Promise.all([apiFetch(`${API}/cong-trinh`).then(r => r.json()), apiFetch(`${API}/cong-viec`).then(r => r.json())])
@@ -504,18 +673,92 @@ function Diary({canWrite}) {
       const response = await apiFetch(`${API}/nhat-ky`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({...form, cong_trinh: project, ngay: diaryDate, cong_viec_id: Number(form.cong_viec_id)}),
+        body: JSON.stringify({
+          ...form,
+          cong_trinh: project,
+          ngay: diaryDate,
+          cong_viec_id: Number(form.cong_viec_id),
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
       setForm(current => ({...current, noi_dung: ""}));
-      setNotice("Đã thêm mục nhật ký.");
-      loadEntries();
+      const draftImages = selectedImages.filter(image => !image.entryId);
+      const previousFailedImages = selectedImages.filter(image => image.entryId);
+      const imagesToUpload = draftImages.map(image => ({
+        ...image,
+        entryId: payload.id,
+        note: imageNote.trim(),
+      }));
+      setSelectedImages([...previousFailedImages, ...imagesToUpload]);
+      setImageNote("");
+      setEntries(current => [payload, ...current.filter(entry => entry.id !== payload.id)]);
+      if (!imagesToUpload.length) {
+        setNotice("Đã thêm mục nhật ký.");
+        return;
+      }
+      const results = await Promise.all(imagesToUpload.map(async image => {
+        const prepared = await prepareImage(image);
+        if (!prepared) return false;
+        return uploadImage(prepared, payload.id);
+      }));
+      const failedCount = results.filter(success => !success).length;
+      setNotice(failedCount
+        ? `Đã lưu nhật ký. ${failedCount} ảnh chưa tải được; nhấn “Tải lại” bên cạnh ảnh lỗi.`
+        : "Đã lưu nhật ký và tải ảnh hiện trường.");
     } catch (e) {
       setError(e.message);
     } finally {
       setSaving(false);
     }
+  }
+
+  function addImages(fileList) {
+    const incoming = Array.from(fileList);
+    const remaining = 10 - selectedImages.length - pendingImageCompressionCount.current;
+    const accepted = incoming.filter(file =>
+      file.type.startsWith("image/") && file.size <= 25 * 1024 * 1024
+    ).slice(0, remaining);
+    if (accepted.length !== incoming.length) {
+      setError("Chỉ chọn tối đa 10 tệp ảnh, mỗi ảnh gốc không quá 25 MB.");
+    } else {
+      setError("");
+    }
+    pendingImageCompressionCount.current += accepted.length;
+    setPendingImageCompressions(pendingImageCompressionCount.current);
+    for (const file of accepted) {
+      const id = crypto.randomUUID();
+      compressDiaryImage(file)
+        .then(({compressedBlob, thumbnailBlob}) => {
+          const preview = URL.createObjectURL(thumbnailBlob);
+          previewUrls.current.add(preview);
+          setSelectedImages(current => [...current, {
+            id, file, compressedBlob, thumbnailBlob, preview, status: "ready", error: "",
+          }]);
+        })
+        .catch(compressionError => {
+          setSelectedImages(current => [...current, {
+            id, file, preview: "", status: "error",
+            error: compressionError.message || "Không thể nén ảnh.",
+          }]);
+        })
+        .finally(() => {
+          pendingImageCompressionCount.current -= 1;
+          setPendingImageCompressions(pendingImageCompressionCount.current);
+        });
+    }
+  }
+
+  function removeImage(image) {
+    releasePreview(image.preview);
+    setSelectedImages(current => current.filter(item => item.id !== image.id));
+  }
+
+  function showPendingImage(image) {
+    if (!image.compressedBlob) return;
+    const objectUrl = URL.createObjectURL(image.compressedBlob);
+    previewUrls.current.add(objectUrl);
+    setLightbox({url: objectUrl, alt: image.file.name, objectUrl});
   }
 
   async function saveSummary(event) {
@@ -571,7 +814,66 @@ function Diary({canWrite}) {
           <label>Hạng mục<select required value={form.cong_viec_id} onChange={e => setForm({...form, cong_viec_id: e.target.value})}><option value="">Chọn hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
           <label>Thời gian<input required type="time" value={form.gio} onChange={e => setForm({...form, gio: e.target.value})}/></label>
           <label className="diary-description">Mô tả công việc<textarea required maxLength={5000} rows={3} value={form.noi_dung} onChange={e => setForm({...form, noi_dung: e.target.value})} placeholder="Mô tả công việc đã thực hiện..."/></label>
-          <button className="primary" disabled={saving || !projectTasks.length}>{saving ? "Đang lưu..." : "Lưu nhật ký"}</button>
+          <button className="primary" disabled={saving || !projectTasks.length || pendingImageCompressions > 0}>
+            {saving ? "Đang lưu..." : pendingImageCompressions > 0 ? `Đang nén ảnh (${pendingImageCompressions})…` : "Lưu nhật ký"}
+          </button>
+        </div>
+        <div className="diary-image-upload">
+          <span className="diary-upload-title">Hình ảnh hiện trường</span>
+          <div
+            className={`diary-dropzone${isDraggingImages ? " dragging" : ""}`}
+            onDragOver={event => { event.preventDefault(); setIsDraggingImages(true); }}
+            onDragLeave={() => setIsDraggingImages(false)}
+            onDrop={event => {
+              event.preventDefault();
+              setIsDraggingImages(false);
+              addImages(event.dataTransfer.files);
+            }}
+          >
+            <UploadCloud size={22}/>
+            <span>Kéo thả ảnh vào đây hoặc</span>
+            <label className="diary-image-picker">
+              Chọn hình ảnh hiện trường
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={event => {
+                  addImages(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            <small>Tối đa 10 ảnh · Tự động nén mỗi ảnh xuống dưới 1 MB</small>
+          </div>
+          <label className="diary-image-note">Ghi chú cho ảnh
+            <input
+              type="text"
+              maxLength={500}
+              value={imageNote}
+              onChange={event => setImageNote(event.target.value)}
+              placeholder="Ví dụ: Ảnh thi công móng khối A"
+            />
+          </label>
+          {selectedImages.length > 0 && <div className="diary-image-grid">
+            {selectedImages.map(image => <div className={`diary-image-card ${image.status === "error" ? "failed" : ""}`} key={image.id}>
+              <button className="diary-image-preview" type="button" onClick={() => showPendingImage(image)} disabled={!image.compressedBlob}>
+                {image.preview ? <img src={image.preview} alt={image.file.name}/> : <span className="diary-image-placeholder">Đang xử lý ảnh</span>}
+              </button>
+              <button className="diary-image-remove" type="button" aria-label={`Xóa ảnh ${image.file.name}`} onClick={() => removeImage(image)}><X size={15}/></button>
+              <small className="diary-image-name" title={image.file.name}>{image.file.name}</small>
+              <small className="diary-image-size">
+                {formatFileSize(image.file.size)}
+                {image.compressedBlob ? ` → ${formatFileSize(image.compressedBlob.size)}` : ""}
+              </small>
+              <span className={`diary-upload-status ${image.status === "error" ? "not-uploaded" : ""}`}>
+                {image.status === "processing" ? "Đang nén" : image.status === "uploading" ? "Đang tải" : image.status === "error" ? "Chưa tải" : "Chưa tải"}
+              </span>
+              {image.status === "error" && <small className="diary-image-error">{image.error}</small>}
+              {image.status === "error" && image.entryId && <button className="diary-retry" type="button" onClick={() => retryImage(image)}><RotateCw size={13}/> Tải lại</button>}
+              {image.status === "error" && !image.entryId && <button className="diary-retry" type="button" onClick={() => retryImage(image)}><RotateCw size={13}/> Thử nén lại</button>}
+            </div>)}
+          </div>}
         </div>
       </form>}
       {error && <div className="alert" role="alert">{error}</div>}
@@ -579,9 +881,23 @@ function Diary({canWrite}) {
       <section className="panel diary-list">
         <div className="panel-head"><div><h2>Nhật ký ngày {diaryDate}</h2><p>{project || "Đang tải công trình"}</p></div></div>
         {entries.length ? <div className="diary-entries">{entries.map(entry => <article className="diary-entry" key={entry.id}>
-          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small></div>
+          <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small>
+            {entry.images?.length > 0 && <div className="diary-saved-images">{entry.images.map((image, index) => <figure key={image.id || `${image.url}-${index}`}>
+              <button type="button" onClick={() => openLightbox(image.url, image.ghi_chu || `Ảnh hiện trường ${index + 1}`)} aria-label="Mở ảnh hiện trường">
+                <img src={image.thumbnail_url || image.url} loading="lazy" alt={image.ghi_chu || `Ảnh hiện trường ${index + 1}`}/>
+              </button>
+              <span className="diary-upload-status uploaded">Đã tải</span>
+              {image.ghi_chu && <figcaption>{image.ghi_chu}</figcaption>}
+            </figure>)}</div>}
+          </div>
         </article>)}</div> : <p className="diary-empty">Chưa có mục nhật ký cho bộ lọc này.</p>}
       </section>
+      {lightbox && <div className="diary-lightbox" role="dialog" aria-modal="true" aria-label="Ảnh hiện trường" onMouseDown={event => {
+        if (event.target === event.currentTarget) closeLightbox();
+      }}>
+        <button type="button" className="diary-lightbox-close" aria-label="Đóng ảnh" onClick={closeLightbox}><X/></button>
+        <img src={lightbox.url} alt={lightbox.alt}/>
+      </div>}
     </div>
   );
 }
@@ -719,16 +1035,82 @@ function Placeholder({title}) {
   );
 }
 
-function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
-  const chartTasks = tasks
-    .filter(task => Number.isInteger(task.es) && Number.isInteger(task.ef))
-    .map(task => ({
-      ...task,
-      name: task.ten,
-      totalFloat: task.total_float,
-      isCritical: Boolean(task.is_critical),
-      actualTask: task,
-    }));
+function SchedulePage({
+  tasks,
+  scheduleResults = [],
+  hasCycle,
+  scheduleMessage,
+  canUpdate,
+  onOpenProgress,
+  error,
+}) {
+  const [dependencies, setDependencies] = useState([]);
+  const [dependencyError, setDependencyError] = useState("");
+  const [loadingDependencies, setLoadingDependencies] = useState(true);
+  const [criticalOnly, setCriticalOnly] = useState(false);
+  const [sortMode, setSortMode] = useState("early-start");
+  const categoryKey = [...new Set(
+    tasks.map(task => task.category_id).filter(Number.isInteger)
+  )].sort((a, b) => a - b).join(",");
+  const categoryIds = categoryKey ? categoryKey.split(",").map(Number) : [];
+
+  useEffect(() => {
+    let active = true;
+    setLoadingDependencies(true);
+    setDependencyError("");
+
+    Promise.all(categoryIds.map(async categoryId => {
+      const response = await apiFetch(`${API}/categories/${categoryId}/dependencies`);
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || "Không thể tải quan hệ phụ thuộc.");
+      }
+      if (!Array.isArray(result)) {
+        throw new Error("Dữ liệu quan hệ phụ thuộc không hợp lệ.");
+      }
+      return result;
+    }))
+      .then(results => {
+        if (active) setDependencies(results.flat());
+      })
+      .catch(fetchError => {
+        if (active) {
+          setDependencies([]);
+          setDependencyError(fetchError.message || "Không thể tải quan hệ phụ thuộc.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingDependencies(false);
+      });
+
+    return () => { active = false; };
+  }, [categoryKey]);
+
+  const dependencyResult = sortTasksByDependencies(tasks, dependencies);
+  const orderedTasks = [...dependencyResult.orderedTasks, ...dependencyResult.blockedTasks];
+  const orderById = new Map(dependencyResult.orderedTasks.map((task, index) => [task.id, index + 1]));
+  const cycleIds = new Set(dependencyResult.cycleTasks.map(task => task.id));
+  const blockedIds = new Set(dependencyResult.blockedTasks.map(task => task.id));
+  const relationshipsById = new Map(
+    dependencyResult.relationships.map(relationship => [relationship.task.id, relationship])
+  );
+  const taskById = new Map(tasks.map(task => [task.id, task]));
+  const sortedResults = [...scheduleResults]
+    .filter(result => !criticalOnly || result.is_critical)
+    .sort((left, right) => {
+      if (sortMode === "early-start-desc") return right.es - left.es || left.task_id - right.task_id;
+      if (sortMode === "delay-desc") return right.total_float - left.total_float || left.task_id - right.task_id;
+      return left.es - right.es || left.task_id - right.task_id;
+    });
+  const chartTasks = sortedResults.map(result => ({
+    ...taskById.get(result.task_id),
+    ...result,
+    id: result.task_id,
+    name: result.ten,
+    totalFloat: result.total_float,
+    isCritical: Boolean(result.is_critical),
+    actualTask: taskById.get(result.task_id),
+  }));
 
   return (
     <div className="content">
@@ -739,11 +1121,74 @@ function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
         </div>
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
+      {loadingDependencies && <p role="status">Đang tải quan hệ phụ thuộc…</p>}
+      {dependencyError && <div className="alert" role="alert">{dependencyError} Không thể đảm bảo thứ tự hiển thị.</div>}
+      {dependencyResult.hasCycle && !dependencyError && (
+        <div className="alert" role="alert">
+          <strong>Phát hiện vòng phụ thuộc. Không thể xếp tất cả công việc.</strong>
+          <p>Công việc nằm trong vòng: {dependencyResult.cycleTasks.map(task => task.ten).join(", ")}</p>
+          <p>Công việc bị vòng chặn: {dependencyResult.blockedTasks.filter(task => !cycleIds.has(task.id)).map(task => task.ten).join(", ") || "Không có"}</p>
+        </div>
+      )}
       {canUpdate && <p className="progress-plan-note">Chọn thanh công việc để cập nhật tiến độ thực tế. Phần màu xanh thể hiện tỷ lệ đã hoàn thành.</p>}
-      <GanttChart
+      {hasCycle && <div className="alert" role="alert">{scheduleMessage || "Dữ liệu công việc có vòng lặp phụ thuộc, không thể tính tiến độ."}</div>}
+      <section className="panel schedule-results-panel">
+        <div className="schedule-table-controls">
+          <label><input type="checkbox" checked={criticalOnly} onChange={event => setCriticalOnly(event.target.checked)}/> Chỉ hiện công việc găng</label>
+          <select aria-label="Sắp xếp bảng tiến độ" value={sortMode} onChange={event => setSortMode(event.target.value)}>
+            <option value="early-start">Thời điểm bắt đầu sớm nhất</option>
+            <option value="early-start-desc">Thời điểm bắt đầu muộn nhất</option>
+            <option value="delay-desc">Độ trễ giảm dần</option>
+          </select>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Công việc</th><th>ES</th><th>EF</th><th>LS</th><th>LF</th>
+              <th>Độ trễ</th><th>Trạng thái</th>
+            </tr></thead>
+            <tbody>
+              {sortedResults.map(result => (
+                <tr key={result.task_id}>
+                  <td>{result.ten}<small>{result.cong_trinh || "Chưa gán công trình"}</small></td>
+                  <td>{result.es}</td><td>{result.ef}</td><td>{result.ls}</td><td>{result.lf}</td>
+                  <td>{result.total_float} ngày</td>
+                  <td>{result.is_critical ? <span className="status done">Công việc găng</span> : <span className="status wait">Không găng</span>}</td>
+                </tr>
+              ))}
+              {!sortedResults.length && <tr><td colSpan="7">{hasCycle ? "Không thể hiển thị bảng do có vòng lặp phụ thuộc." : "Chưa có dữ liệu tiến độ."}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {!loadingDependencies && !dependencyError && <section className="panel table-panel" style={{ marginTop: 18 }}>
+        <div className="panel-head" style={{ padding: "18px 18px 0" }}>
+          <div><h2>Thứ tự công việc theo quan hệ phụ thuộc</h2><p>Quan hệ tiên quyết và công việc kế tiếp được hiển thị hai chiều.</p></div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Thứ tự</th><th>Công việc</th><th>Phụ thuộc vào</th><th>Công việc kế tiếp</th><th>Trạng thái xếp</th></tr></thead>
+            <tbody>
+              {orderedTasks.map(task => {
+                const relationship = relationshipsById.get(task.id);
+                const status = cycleIds.has(task.id) ? "Nằm trong vòng" : blockedIds.has(task.id) ? "Bị vòng chặn" : "Có thể xếp";
+                return <tr key={task.id}>
+                  <td>{orderById.get(task.id) ?? "—"}</td>
+                  <td>{task.ten}</td>
+                  <td>{relationship.prerequisites.map(item => item.ten).join(", ") || "—"}</td>
+                  <td>{relationship.dependents.map(item => item.ten).join(", ") || "—"}</td>
+                  <td>{status}</td>
+                </tr>;
+              })}
+              {!orderedTasks.length && <tr><td colSpan="5">Chưa có công việc.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>}
+      {!hasCycle && <GanttChart
         data={chartTasks}
         onTaskSelect={canUpdate ? onOpenProgress : undefined}
-      />
+      />}
     </div>
   );
 }

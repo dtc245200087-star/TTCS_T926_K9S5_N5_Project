@@ -5,6 +5,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
 
+from . import migrations
 from .models import user as users
 from .models import cong_viec as tasks
 from .models import milestone as milestone_data
@@ -26,7 +27,7 @@ def create_app(test_config=None):
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
         PERMANENT_SESSION_LIFETIME=60 * 60 * 8,
         JSON_AS_ASCII=False,
-        MAX_CONTENT_LENGTH=1024 * 1024,
+        MAX_CONTENT_LENGTH=2 * 1024 * 1024,
         FRONTEND_ORIGINS=[origin.strip() for origin in os.environ.get(
             "FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
         ).split(",") if origin.strip()],
@@ -38,6 +39,7 @@ def create_app(test_config=None):
     db_path.parent.mkdir(parents=True, exist_ok=True)
     users.initialize_database(str(db_path))
     tasks.initialize_database(str(db_path))
+    migrations.upgrade_database(str(db_path))
     milestone_data.initialize_database(str(db_path))
     if users.count_users(str(db_path)) == 0:
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")

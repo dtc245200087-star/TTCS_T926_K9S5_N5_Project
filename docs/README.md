@@ -68,6 +68,17 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
 
+## Ảnh hiện trường trong nhật ký thi công
+
+Khi tạo mục nhật ký, có thể chọn hoặc kéo thả tối đa 10 ảnh. Trình duyệt nén ảnh sang JPEG dưới 1 MB và tạo thumbnail riêng trước khi gửi từng ảnh lên API. Nhật ký được lưu độc lập trước ảnh, vì vậy lỗi mạng khi tải ảnh không làm mất nội dung; từng ảnh lỗi có thể tải lại mà không tạo bản trùng. Thumbnail được tải lười, và ảnh đầy đủ chỉ được lấy khi mở ảnh. Ảnh được lưu trong thư mục `diary_images` cạnh cơ sở dữ liệu người dùng; Docker Compose lưu thư mục này cùng volume `backend_data`.
+
+## Projects và cây work items
+
+Khi backend khởi động, migration phiên bản 1 tạo hai bảng `projects` và `work_items`. `work_items.project_id` tham chiếu project; `work_items.parent_id` tạo quan hệ cha-con trong cùng project. Cơ sở dữ liệu kiểm tra khóa ngoại, ngăn chu trình cha-con và có chỉ mục trên `parent_id`. Model `app.models.project_work_items.get_work_item_tree()` dùng CTE đệ quy và trả về cây lồng nhau gồm hạng mục được yêu cầu cùng tất cả cấp con.
+
+Các bảng này được bổ sung độc lập để không làm thay đổi hoặc sao chép dữ liệu đang được các luồng hiện hữu sử dụng trong `cong_viec`, `categories` và danh sách công trình cũ. Chúng không tự đồng bộ với các bảng/luồng legacy.
+Có thể hoàn tác migration bằng `app.migrations.downgrade_database(database_path, target_version=0)`. Lưu ý: hoàn tác phiên bản 1 sẽ xóa các bảng `work_items` và `projects` cùng dữ liệu của chúng; các bảng legacy không bị xóa.
+
 ## Benchmark S-13 (T-29)
 
 Trên Windows 11 với Chrome, biểu đồ SVG hiển thị 500 thanh trong **0,101 giây**. Khi cuộn ngang, FPS đo được là **22,8 FPS ở giữa biểu đồ** và **1,2 FPS ở đoạn cuối danh sách**, cho thấy cuộn chưa mượt ở quy mô 500 công việc dù thời gian render ban đầu nhanh. Đây là trường hợp cực đoan; với khoảng 20–50 công việc dự kiến trong dự án, tiếp tục giữ SVG. Tối ưu bằng Canvas hoặc virtualize có thể xem xét trong task mở rộng sau.
@@ -88,3 +99,15 @@ Mỗi công trình có một bản tổng hợp mỗi ngày để ghi số nhân
 
 - `GET /api/nhat-ky/thong-tin-ngay?cong_trinh=...&ngay=YYYY-MM-DD` — xem tổng hợp.
 - `PUT /api/nhat-ky/thong-tin-ngay` — lưu nhân lực, thiết bị, thời tiết và cờ mưa cả ngày.
+
+## S-06 — Khai báo quan hệ phụ thuộc
+
+Chọn **Quan hệ phụ thuộc (S-06)** ở thanh điều hướng để xem mockup mô tả các yêu cầu của màn hình khai báo quan hệ công việc. Đây là giao diện mô phỏng; phần quản lý dữ liệu phụ thuộc cần được triển khai riêng.
+
+### Sắp xếp công việc và phát hiện vòng phụ thuộc (S-07)
+
+Mục **Tiến độ và đường găng** tải các quan hệ phụ thuộc theo từng hạng mục và sắp xếp công việc bằng thuật toán topo không đệ quy. Bảng quan hệ liệt kê cả công việc tiên quyết và công việc kế tiếp. Nếu dữ liệu có chu trình, giao diện đánh dấu riêng công việc thuộc vòng và công việc bị vòng chặn; các công việc này không được đánh số thứ tự thực hiện.
+
+## Bảng kết quả tiến độ
+
+Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.
