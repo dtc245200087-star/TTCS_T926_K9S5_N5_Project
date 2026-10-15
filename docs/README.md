@@ -81,3 +81,10 @@ Mục **Hạng mục** cho phép quản trị viên và quản lý công trình 
 Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng mục, quan hệ công việc và mốc bàn giao. Các tài khoản đã đăng nhập khác có thể xem cây, mốc và cảnh báo. Cơ sở dữ liệu hiện có tự động được bổ sung cột `category_id` cùng các bảng `categories`, `category_tasks`, `task_dependencies` và `milestones` khi backend khởi động.
 
 Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
+
+## S-22 — Nhân lực, thiết bị và thời tiết theo ngày
+
+Mỗi công trình có một bản tổng hợp mỗi ngày để ghi số nhân lực, thiết bị sử dụng và thời tiết. Chọn **Mưa cả ngày** sẽ đặt thời tiết thành **Mưa**; dấu này được lưu riêng để phân biệt mưa cả ngày với mưa một phần ngày khi đối chiếu chậm tiến độ. API từ chối dấu mưa cả ngày nếu thời tiết không phải mưa. Cột SQLite mới được bổ sung tự động cho cơ sở dữ liệu hiện có.
+
+- `GET /api/nhat-ky/thong-tin-ngay?cong_trinh=...&ngay=YYYY-MM-DD` — xem tổng hợp.
+- `PUT /api/nhat-ky/thong-tin-ngay` — lưu nhân lực, thiết bị, thời tiết và cờ mưa cả ngày.

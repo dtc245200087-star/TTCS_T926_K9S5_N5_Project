@@ -25,6 +25,7 @@ def initialize_database(database_path):
                 thiet_bi TEXT,
                 thoi_tiet TEXT,
                 ghi_chu_thoi_tiet TEXT,
+                mua_ca_ngay INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (cong_trinh, ngay)
             );
@@ -47,6 +48,7 @@ def initialize_database(database_path):
             ("thiet_bi", "TEXT"),
             ("thoi_tiet", "TEXT"),
             ("ghi_chu_thoi_tiet", "TEXT"),
+            ("mua_ca_ngay", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in day_columns:
                 db.execute(f"ALTER TABLE nhat_ky_ngay ADD COLUMN {column} {definition}")
@@ -104,20 +106,24 @@ def get_daily_summary(database_path, project, diary_date):
             "SELECT * FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
             (project, diary_date),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        summary = dict(row)
+        summary["mua_ca_ngay"] = bool(summary.get("mua_ca_ngay", 0))
+        return summary
 
 
 def update_daily_summary(database_path, *, project, diary_date, user_id, workforce_count,
-                         workforce_notes, equipment, weather, weather_notes):
+                         workforce_notes, equipment, weather, weather_notes, all_day_rain):
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
         db.execute("PRAGMA foreign_keys = ON")
         day_id = _get_or_create_day(db, project, diary_date, user_id)
         db.execute(
             """UPDATE nhat_ky_ngay
                SET nhan_luc_so_nguoi = ?, nhan_luc_ghi_chu = ?, thiet_bi = ?,
-                   thoi_tiet = ?, ghi_chu_thoi_tiet = ?
+                   thoi_tiet = ?, ghi_chu_thoi_tiet = ?, mua_ca_ngay = ?
                WHERE id = ?""",
-            (workforce_count, workforce_notes, equipment, weather, weather_notes, day_id),
+            (workforce_count, workforce_notes, equipment, weather, weather_notes, int(all_day_rain), day_id),
         )
         db.commit()
     return get_daily_summary(database_path, project, diary_date)

@@ -525,6 +525,11 @@ def update_nhat_ky_thong_tin_ngay():
     weather = data.get("thoi_tiet", "")
     if not isinstance(weather, str) or weather not in ("", "Nắng", "Nhiều mây", "Mưa", "Khác"):
         return jsonify({"error": "invalid_weather", "message": "Tình trạng thời tiết không hợp lệ."}), 400
+    all_day_rain = data.get("mua_ca_ngay", False)
+    if not isinstance(all_day_rain, bool):
+        return jsonify({"error": "invalid_all_day_rain", "message": "Đánh dấu mưa cả ngày không hợp lệ."}), 400
+    if all_day_rain and weather != "Mưa":
+        return jsonify({"error": "invalid_all_day_rain", "message": "Chỉ có thể đánh dấu mưa cả ngày khi thời tiết là Mưa."}), 400
     text_fields = (
         ("nhan_luc_ghi_chu", "Ghi chú nhân lực", 2000),
         ("thiet_bi", "Thiết bị", 4000),
@@ -545,5 +550,6 @@ def update_nhat_ky_thong_tin_ngay():
         equipment=data.get("thiet_bi", "").strip(),
         weather=weather,
         weather_notes=data.get("ghi_chu_thoi_tiet", "").strip(),
+        all_day_rain=all_day_rain,
     )
     return jsonify(summary)
