@@ -1,7 +1,10 @@
 from datetime import date, datetime
 import sqlite3
 
-from flask import Blueprint, current_app, jsonify, request
+from pathlib import Path
+import uuid
+
+from flask import Blueprint, current_app, jsonify, request, send_from_directory
 
 from ..models import cong_viec as tasks
 from ..models import milestone as milestone_data
@@ -434,7 +437,7 @@ def get_nhat_ky():
 @api.post("/nhat-ky")
 @roles_required("admin", "manager", "engineer")
 def add_nhat_ky():
-    data = request.get_json(silent=True)
+    data = request.get_json(silent=True) if request.is_json else request.form.to_dict()
     if not isinstance(data, dict):
         return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
 
@@ -478,6 +481,87 @@ def add_nhat_ky():
         user_id=request.current_user["id"],
     )
     return jsonify(entry), 201
+
+
+@api.post("/nhat-ky/<int:entry_id>/images")
+@roles_required("admin", "manager", "engineer")
+def upload_nhat_ky_image(entry_id):
+    database_path = current_app.config["USER_DATABASE"]
+    if not diaries.entry_exists(database_path, entry_id):
+        return jsonify({"error": "not_found", "message": "Không tìm thấy mục nhật ký."}), 404
+    upload_id = request.form.get("upload_id", "")
+    if not upload_id or len(upload_id) > 64:
+        return jsonify({"error": "invalid_upload_id", "message": "Mã lần tải ảnh không hợp lệ."}), 400
+    existing_image = diaries.get_entry_image_by_upload_id(database_path, entry_id, upload_id)
+    if existing_image:
+        return jsonify(existing_image), 200
+    if diaries.count_entry_images(database_path, entry_id) >= 10:
+        return jsonify({"error": "too_many_images", "message": "Mỗi mục nhật ký được đính tối đa 10 ảnh."}), 409
+
+    image_file = request.files.get("image")
+    thumbnail_file = request.files.get("thumbnail")
+    note = request.form.get("ghi_chu_anh", "")
+    if image_file is None or thumbnail_file is None:
+        return jsonify({"error": "missing_image", "message": "Cần tải cả ảnh và ảnh thu nhỏ."}), 400
+    if len(note) > 500:
+        return jsonify({"error": "invalid_image_note", "message": "Ghi chú ảnh tối đa 500 ký tự."}), 400
+
+    image_contents = image_file.stream.read(1024 * 1024 + 1)
+    thumbnail_contents = thumbnail_file.stream.read(150 * 1024 + 1)
+    if (
+        len(image_contents) >= 1024 * 1024
+        or not image_contents.startswith(b"\xff\xd8\xff")
+        or len(thumbnail_contents) > 150 * 1024
+        or not thumbnail_contents.startswith(b"\xff\xd8\xff")
+    ):
+        return jsonify({
+            "error": "invalid_image",
+            "message": "Ảnh phải là JPEG hợp lệ, tối đa 1 MB; ảnh thu nhỏ tối đa 150 KB.",
+        }), 400
+
+    filename = f"{uuid.uuid4().hex}.jpg"
+    thumbnail_filename = f"{uuid.uuid4().hex}-thumb.jpg"
+    upload_folder = Path(database_path).parent / "diary_images"
+    image_path = upload_folder / filename
+    thumbnail_path = upload_folder / thumbnail_filename
+    try:
+        upload_folder.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(image_contents)
+        thumbnail_path.write_bytes(thumbnail_contents)
+        image = diaries.add_entry_image(
+            database_path,
+            entry_id=entry_id,
+            filename=filename,
+            thumbnail_filename=thumbnail_filename,
+            upload_id=upload_id,
+            note=note.strip(),
+        )
+    except sqlite3.IntegrityError:
+        image_path.unlink(missing_ok=True)
+        thumbnail_path.unlink(missing_ok=True)
+        existing_image = diaries.get_entry_image_by_upload_id(database_path, entry_id, upload_id)
+        if existing_image:
+            return jsonify(existing_image), 200
+        raise
+    except (OSError, sqlite3.Error):
+        image_path.unlink(missing_ok=True)
+        thumbnail_path.unlink(missing_ok=True)
+        raise
+    return jsonify(image), 201
+
+
+@api.get("/nhat-ky/images/<path:filename>")
+@login_required
+def get_nhat_ky_image(filename):
+    upload_folder = Path(current_app.config["USER_DATABASE"]).parent / "diary_images"
+    return send_from_directory(upload_folder, filename)
+
+
+@api.get("/nhat-ky/thumbnails/<path:filename>")
+@login_required
+def get_nhat_ky_thumbnail(filename):
+    upload_folder = Path(current_app.config["USER_DATABASE"]).parent / "diary_images"
+    return send_from_directory(upload_folder, filename)
 
 
 @api.get("/nhat-ky/thong-tin-ngay")

@@ -26,7 +26,7 @@ def create_app(test_config=None):
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
         PERMANENT_SESSION_LIFETIME=60 * 60 * 8,
         JSON_AS_ASCII=False,
-        MAX_CONTENT_LENGTH=1024 * 1024,
+        MAX_CONTENT_LENGTH=2 * 1024 * 1024,
         FRONTEND_ORIGINS=[origin.strip() for origin in os.environ.get(
             "FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
         ).split(",") if origin.strip()],

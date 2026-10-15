@@ -68,6 +68,10 @@ Trong mục **Công việc**, quản trị viên, quản lý công trình và k�
 
 Các cột tiến độ thực tế và kế hoạch Gantt còn thiếu được tự động thêm vào cơ sở dữ liệu hiện có khi backend khởi động.
 
+## Ảnh hiện trường trong nhật ký thi công
+
+Khi tạo mục nhật ký, có thể chọn hoặc kéo thả tối đa 10 ảnh. Trình duyệt nén ảnh sang JPEG dưới 1 MB và tạo thumbnail riêng trước khi gửi từng ảnh lên API. Nhật ký được lưu độc lập trước ảnh, vì vậy lỗi mạng khi tải ảnh không làm mất nội dung; từng ảnh lỗi có thể tải lại mà không tạo bản trùng. Thumbnail được tải lười, và ảnh đầy đủ chỉ được lấy khi mở ảnh. Ảnh được lưu trong thư mục `diary_images` cạnh cơ sở dữ liệu người dùng; Docker Compose lưu thư mục này cùng volume `backend_data`.
+
 ## Benchmark S-13 (T-29)
 
 Trên Windows 11 với Chrome, biểu đồ SVG hiển thị 500 thanh trong **0,101 giây**. Khi cuộn ngang, FPS đo được là **22,8 FPS ở giữa biểu đồ** và **1,2 FPS ở đoạn cuối danh sách**, cho thấy cuộn chưa mượt ở quy mô 500 công việc dù thời gian render ban đầu nhanh. Đây là trường hợp cực đoan; với khoảng 20–50 công việc dự kiến trong dự án, tiếp tục giữ SVG. Tối ưu bằng Canvas hoặc virtualize có thể xem xét trong task mở rộng sau.
