@@ -89,3 +89,6 @@ Mục **Hạng mục** cho phép quản trị viên và quản lý công trình 
 Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng mục, quan hệ công việc và mốc bàn giao. Các tài khoản đã đăng nhập khác có thể xem cây, mốc và cảnh báo. Cơ sở dữ liệu hiện có tự động được bổ sung cột `category_id` cùng các bảng `categories`, `category_tasks`, `task_dependencies` và `milestones` khi backend khởi động.
 
 Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
+## S-06 — Khai báo quan hệ phụ thuộc
+
+Chọn **Quan hệ phụ thuộc (S-06)** ở thanh điều hướng để xem mockup mô tả các yêu cầu của màn hình khai báo quan hệ công việc. Đây là giao diện mô phỏng; phần quản lý dữ liệu phụ thuộc cần được triển khai riêng.

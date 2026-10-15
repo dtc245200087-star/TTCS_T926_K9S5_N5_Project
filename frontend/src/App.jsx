@@ -10,6 +10,7 @@ import GanttChart from "./components/GanttChart";
 import CategoryTree from "./components/CategoryTree.jsx";
 import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
 import "./milestone.css";
+import S06DependencyPage from "./components/S06DependencyPage.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -28,6 +29,7 @@ const menu = [
   ["Hạng mục", ClipboardList],
   ["Mốc bàn giao", CalendarDays],
   ["Công việc", ClipboardList],
+  ["Quan hệ phụ thuộc (S-06)", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
   ["Nhân sự", Users],
   ["Vật tư", Package],
@@ -179,6 +181,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
          page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
