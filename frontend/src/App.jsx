@@ -9,6 +9,7 @@ import { apiFetch } from "./api.js";
 import GanttChart from "./components/GanttChart";
 import CategoryTree from "./components/CategoryTree.jsx";
 import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
+import { sortTasksByDependencies } from "./dependencies.js";
 import "./milestone.css";
 import S06DependencyPage from "./components/S06DependencyPage.jsx";
 
@@ -722,7 +723,55 @@ function Placeholder({title}) {
 }
 
 function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
-  const chartTasks = tasks
+  const [dependencies, setDependencies] = useState([]);
+  const [dependencyError, setDependencyError] = useState("");
+  const [loadingDependencies, setLoadingDependencies] = useState(true);
+  const categoryKey = [...new Set(
+    tasks.map(task => task.category_id).filter(Number.isInteger)
+  )].sort((a, b) => a - b).join(",");
+  const categoryIds = categoryKey ? categoryKey.split(",").map(Number) : [];
+
+  useEffect(() => {
+    let active = true;
+    setLoadingDependencies(true);
+    setDependencyError("");
+
+    Promise.all(categoryIds.map(async categoryId => {
+      const response = await apiFetch(`${API}/categories/${categoryId}/dependencies`);
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || "Không thể tải quan hệ phụ thuộc.");
+      }
+      if (!Array.isArray(result)) {
+        throw new Error("Dữ liệu quan hệ phụ thuộc không hợp lệ.");
+      }
+      return result;
+    }))
+      .then(results => {
+        if (active) setDependencies(results.flat());
+      })
+      .catch(fetchError => {
+        if (active) {
+          setDependencies([]);
+          setDependencyError(fetchError.message || "Không thể tải quan hệ phụ thuộc.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingDependencies(false);
+      });
+
+    return () => { active = false; };
+  }, [categoryKey]);
+
+  const dependencyResult = sortTasksByDependencies(tasks, dependencies);
+  const orderedTasks = [...dependencyResult.orderedTasks, ...dependencyResult.blockedTasks];
+  const orderById = new Map(dependencyResult.orderedTasks.map((task, index) => [task.id, index + 1]));
+  const cycleIds = new Set(dependencyResult.cycleTasks.map(task => task.id));
+  const blockedIds = new Set(dependencyResult.blockedTasks.map(task => task.id));
+  const relationshipsById = new Map(
+    dependencyResult.relationships.map(relationship => [relationship.task.id, relationship])
+  );
+  const chartTasks = orderedTasks
     .filter(task => Number.isInteger(task.es) && Number.isInteger(task.ef))
     .map(task => ({
       ...task,
@@ -741,11 +790,46 @@ function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
         </div>
       </div>
       {error && <div className="alert" role="alert">{error}</div>}
+      {loadingDependencies && <p role="status">Đang tải quan hệ phụ thuộc…</p>}
+      {dependencyError && <div className="alert" role="alert">{dependencyError} Không thể đảm bảo thứ tự hiển thị.</div>}
+      {dependencyResult.hasCycle && !dependencyError && (
+        <div className="alert" role="alert">
+          <strong>Phát hiện vòng phụ thuộc. Không thể xếp tất cả công việc.</strong>
+          <p>Công việc nằm trong vòng: {dependencyResult.cycleTasks.map(task => task.ten).join(", ")}</p>
+          <p>Công việc bị vòng chặn: {dependencyResult.blockedTasks.filter(task => !cycleIds.has(task.id)).map(task => task.ten).join(", ") || "Không có"}</p>
+        </div>
+      )}
       {canUpdate && <p className="progress-plan-note">Chọn thanh công việc để cập nhật tiến độ thực tế. Phần màu xanh thể hiện tỷ lệ đã hoàn thành.</p>}
-      <GanttChart
-        data={chartTasks}
-        onTaskSelect={canUpdate ? onOpenProgress : undefined}
-      />
+      {!loadingDependencies && !dependencyError && <>
+        <GanttChart
+          data={chartTasks}
+          onTaskSelect={canUpdate ? onOpenProgress : undefined}
+        />
+        <section className="panel table-panel" style={{ marginTop: 18 }}>
+          <div className="panel-head" style={{ padding: "18px 18px 0" }}>
+            <div><h2>Thứ tự công việc theo quan hệ phụ thuộc</h2><p>Quan hệ tiên quyết và công việc kế tiếp được hiển thị hai chiều.</p></div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Thứ tự</th><th>Công việc</th><th>Phụ thuộc vào</th><th>Công việc kế tiếp</th><th>Trạng thái xếp</th></tr></thead>
+              <tbody>
+                {orderedTasks.map(task => {
+                  const relationship = relationshipsById.get(task.id);
+                  const status = cycleIds.has(task.id) ? "Nằm trong vòng" : blockedIds.has(task.id) ? "Bị vòng chặn" : "Có thể xếp";
+                  return <tr key={task.id}>
+                    <td>{orderById.get(task.id) ?? "—"}</td>
+                    <td>{task.ten}</td>
+                    <td>{relationship.prerequisites.map(item => item.ten).join(", ") || "—"}</td>
+                    <td>{relationship.dependents.map(item => item.ten).join(", ") || "—"}</td>
+                    <td>{status}</td>
+                  </tr>;
+                })}
+                {!orderedTasks.length && <tr><td colSpan="5">Chưa có công việc.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </>}
     </div>
   );
 }
