@@ -539,7 +539,7 @@ function Diary({canWrite}) {
   }
 
   return (
-    <div className="content">
+    <div className="content diary-content">
       <div className="page-title">
         <div>
           <h1>Nhật ký thi công</h1>
