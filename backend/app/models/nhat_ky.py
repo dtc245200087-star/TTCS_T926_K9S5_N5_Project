@@ -37,10 +37,27 @@ def initialize_database(database_path):
                 nguoi_lap_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS nhat_ky_anh (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nhat_ky_muc_id INTEGER NOT NULL REFERENCES nhat_ky_muc(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                thumbnail_filename TEXT,
+                upload_id TEXT UNIQUE,
+                ghi_chu TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE INDEX IF NOT EXISTS nhat_ky_ngay_lookup ON nhat_ky_ngay(cong_trinh, ngay);
             CREATE INDEX IF NOT EXISTS nhat_ky_muc_work_item ON nhat_ky_muc(cong_viec_id);
         """)
         day_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_ngay)").fetchall()}
+        image_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_anh)").fetchall()}
+        if "thumbnail_filename" not in image_columns:
+            db.execute("ALTER TABLE nhat_ky_anh ADD COLUMN thumbnail_filename TEXT")
+        if "upload_id" not in image_columns:
+            db.execute("ALTER TABLE nhat_ky_anh ADD COLUMN upload_id TEXT")
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS nhat_ky_anh_upload_id ON nhat_ky_anh(upload_id)"
+        )
         for column, definition in (
             ("nhan_luc_so_nguoi", "INTEGER"),
             ("nhan_luc_ghi_chu", "TEXT"),
@@ -94,7 +111,88 @@ def list_entries(database_path, *, project=None, diary_date=None, work_item_id=N
             " ORDER BY d.ngay DESC, e.gio, e.id",
             values,
         ).fetchall()
-        return [dict(row) for row in rows]
+        entries = [dict(row) for row in rows]
+        for entry in entries:
+            entry["images"] = []
+        if entries:
+            entry_ids = [entry["id"] for entry in entries]
+            placeholders = ",".join("?" for _ in entry_ids)
+            images = db.execute(
+                f"""SELECT id, nhat_ky_muc_id, filename, thumbnail_filename, ghi_chu
+                    FROM nhat_ky_anh WHERE nhat_ky_muc_id IN ({placeholders})
+                    ORDER BY id""",
+                entry_ids,
+            ).fetchall()
+            by_entry = {entry_id: [] for entry_id in entry_ids}
+            for image in images:
+                by_entry[image["nhat_ky_muc_id"]].append({
+                    "id": image["id"],
+                    "url": f"/api/nhat-ky/images/{image['filename']}",
+                    "thumbnail_url": (
+                        f"/api/nhat-ky/thumbnails/{image['thumbnail_filename']}"
+                        if image["thumbnail_filename"] else
+                        f"/api/nhat-ky/images/{image['filename']}"
+                    ),
+                    "ghi_chu": image["ghi_chu"],
+                })
+            for entry in entries:
+                entry["images"] = by_entry[entry["id"]]
+        return entries
+
+
+def entry_exists(database_path, entry_id):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        return db.execute(
+            "SELECT 1 FROM nhat_ky_muc WHERE id = ?", (entry_id,)
+        ).fetchone() is not None
+
+
+def count_entry_images(database_path, entry_id):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        return db.execute(
+            "SELECT COUNT(*) FROM nhat_ky_anh WHERE nhat_ky_muc_id = ?",
+            (entry_id,),
+        ).fetchone()[0]
+
+
+def get_entry_image_by_upload_id(database_path, entry_id, upload_id):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        image = db.execute(
+            """SELECT id, filename, thumbnail_filename, ghi_chu
+               FROM nhat_ky_anh WHERE nhat_ky_muc_id = ? AND upload_id = ?""",
+            (entry_id, upload_id),
+        ).fetchone()
+    if not image:
+        return None
+    return {
+        "id": image["id"],
+        "url": f"/api/nhat-ky/images/{image['filename']}",
+        "thumbnail_url": (
+            f"/api/nhat-ky/thumbnails/{image['thumbnail_filename']}"
+            if image["thumbnail_filename"] else
+            f"/api/nhat-ky/images/{image['filename']}"
+        ),
+        "ghi_chu": image["ghi_chu"],
+    }
+
+
+def add_entry_image(database_path, *, entry_id, filename, thumbnail_filename, upload_id, note):
+    with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        cursor = db.execute(
+            """INSERT INTO nhat_ky_anh
+               (nhat_ky_muc_id, filename, thumbnail_filename, upload_id, ghi_chu)
+               VALUES (?, ?, ?, ?, ?)""",
+            (entry_id, filename, thumbnail_filename, upload_id, note),
+        )
+        image_id = cursor.lastrowid
+        db.commit()
+    return {
+        "id": image_id,
+        "url": f"/api/nhat-ky/images/{filename}",
+        "thumbnail_url": f"/api/nhat-ky/thumbnails/{thumbnail_filename}",
+        "ghi_chu": note,
+    }
 
 
 def get_daily_summary(database_path, project, diary_date):
@@ -123,7 +221,8 @@ def update_daily_summary(database_path, *, project, diary_date, user_id, workfor
     return get_daily_summary(database_path, project, diary_date)
 
 
-def create_entry(database_path, *, project, diary_date, task_id, entry_time, description, user_id):
+def create_entry(database_path, *, project, diary_date, task_id, entry_time, description,
+                 user_id, images=()):
     with sqlite3.connect(database_path, timeout=10) as db:
         db.execute("PRAGMA foreign_keys = ON")
         diary_id = _get_or_create_day(db, project, diary_date, user_id)
@@ -134,6 +233,11 @@ def create_entry(database_path, *, project, diary_date, task_id, entry_time, des
             (diary_id, task_id, entry_time, description, user_id),
         )
         entry_id = cursor.lastrowid
+        db.executemany(
+            """INSERT INTO nhat_ky_anh (nhat_ky_muc_id, filename, ghi_chu)
+               VALUES (?, ?, ?)""",
+            [(entry_id, image["filename"], image["ghi_chu"]) for image in images],
+        )
         db.commit()
     return next((entry for entry in list_entries(database_path, project=project, diary_date=diary_date) if entry["id"] == entry_id), None)
 

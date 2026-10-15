@@ -28,7 +28,7 @@ class MilestoneModelTests(unittest.TestCase):
             self.database_path, "Móng", None, "2026-10-01"
         )
         first = self.tasks["Chuẩn bị mặt bằng"]
-        second = self.tasks["Khảo sát và định vị công trình"]
+        second = self.tasks["Kiểm tra vật tư"]
         milestone.assign_task(self.database_path, category["id"], first)
         milestone.assign_task(self.database_path, category["id"], second)
         milestone.add_dependency(self.database_path, second, first)
@@ -37,11 +37,11 @@ class MilestoneModelTests(unittest.TestCase):
             self.database_path, category["id"], "2026-10-02"
         )
 
-        self.assertEqual(forecast["projected_finish"], "2026-10-04")
-        self.assertEqual(forecast["overrun_days"], 2)
+        self.assertEqual(forecast["projected_finish"], "2026-10-08")
+        self.assertEqual(forecast["overrun_days"], 6)
         self.assertEqual(
             forecast["delay_chain"],
-            ["Chuẩn bị mặt bằng", "Khảo sát và định vị công trình"],
+            ["Chuẩn bị mặt bằng", "Kiểm tra vật tư"],
         )
         self.assertTrue(all(isinstance(task_name, str) for task_name in forecast["delay_chain"]))
 
@@ -50,7 +50,7 @@ class MilestoneModelTests(unittest.TestCase):
             self.database_path, "Kết cấu", None, "2026-10-01"
         )
         first = self.tasks["Chuẩn bị mặt bằng"]
-        second = self.tasks["Khảo sát và định vị công trình"]
+        second = self.tasks["Kiểm tra vật tư"]
         milestone.assign_task(self.database_path, category["id"], first)
         milestone.assign_task(self.database_path, category["id"], second)
         milestone.add_dependency(self.database_path, second, first)
@@ -139,7 +139,7 @@ class MilestoneAuthorizationTests(unittest.TestCase):
                 task["ten"]: task["id"] for task in cong_viec.list_tasks(database_path)
             }
             first_name = "Chuẩn bị mặt bằng"
-            second_name = "Khảo sát và định vị công trình"
+            second_name = "Kiểm tra vật tư"
             first, second = tasks_by_name[first_name], tasks_by_name[second_name]
             milestone.assign_task(database_path, category["id"], first)
             milestone.assign_task(database_path, category["id"], second)
