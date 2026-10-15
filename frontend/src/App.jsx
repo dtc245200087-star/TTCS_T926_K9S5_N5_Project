@@ -11,6 +11,7 @@ import CategoryTree from "./components/CategoryTree.jsx";
 import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
 import { sortTasksByDependencies } from "./dependencies.js";
 import "./milestone.css";
+import "./task-progress.css";
 import S06DependencyPage from "./components/S06DependencyPage.jsx";
 
 const API = "/api";
@@ -46,6 +47,7 @@ function App({ user, onLogout, onPasswordChanged }) {
   const [data, setData] = useState(null);
   const [taskData, setTaskData] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
+  const [scheduleData, setScheduleData] = useState({ schedule_results: [], has_cycle: false, message: "" });
   const [tasksError, setTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState(null);
   const [progressForm, setProgressForm] = useState(null);
@@ -60,14 +62,23 @@ function App({ user, onLogout, onPasswordChanged }) {
 
   useEffect(() => {
     if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
+    const loadSchedule = page === "Tiến độ và đường găng";
     let active = true;
     setTasksError("");
-    apiFetch(`${API}/cong-viec`)
+    apiFetch(`${API}/${loadSchedule ? "schedule-results" : "cong-viec"}`)
       .then(response => {
         if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
         return response.json();
       })
-      .then(tasks => { if (active) setTaskData(tasks); })
+      .then(result => {
+        if (!active) return;
+        if (loadSchedule) {
+          setTaskData(result.tasks);
+          setScheduleData(result);
+        } else {
+          setTaskData(result);
+        }
+      })
       .catch(error => { if (active) setTasksError(error.message); });
     return () => { active = false; };
   }, [page]);
@@ -180,7 +191,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
-         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
@@ -722,10 +733,20 @@ function Placeholder({title}) {
   );
 }
 
-function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
+function SchedulePage({
+  tasks,
+  scheduleResults = [],
+  hasCycle,
+  scheduleMessage,
+  canUpdate,
+  onOpenProgress,
+  error,
+}) {
   const [dependencies, setDependencies] = useState([]);
   const [dependencyError, setDependencyError] = useState("");
   const [loadingDependencies, setLoadingDependencies] = useState(true);
+  const [criticalOnly, setCriticalOnly] = useState(false);
+  const [sortMode, setSortMode] = useState("early-start");
   const categoryKey = [...new Set(
     tasks.map(task => task.category_id).filter(Number.isInteger)
   )].sort((a, b) => a - b).join(",");
@@ -771,15 +792,23 @@ function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
   const relationshipsById = new Map(
     dependencyResult.relationships.map(relationship => [relationship.task.id, relationship])
   );
-  const chartTasks = orderedTasks
-    .filter(task => Number.isInteger(task.es) && Number.isInteger(task.ef))
-    .map(task => ({
-      ...task,
-      name: task.ten,
-      totalFloat: task.total_float,
-      isCritical: Boolean(task.is_critical),
-      actualTask: task,
-    }));
+  const taskById = new Map(tasks.map(task => [task.id, task]));
+  const sortedResults = [...scheduleResults]
+    .filter(result => !criticalOnly || result.is_critical)
+    .sort((left, right) => {
+      if (sortMode === "early-start-desc") return right.es - left.es || left.task_id - right.task_id;
+      if (sortMode === "delay-desc") return right.total_float - left.total_float || left.task_id - right.task_id;
+      return left.es - right.es || left.task_id - right.task_id;
+    });
+  const chartTasks = sortedResults.map(result => ({
+    ...taskById.get(result.task_id),
+    ...result,
+    id: result.task_id,
+    name: result.ten,
+    totalFloat: result.total_float,
+    isCritical: Boolean(result.is_critical),
+    actualTask: taskById.get(result.task_id),
+  }));
 
   return (
     <div className="content">
@@ -800,36 +829,64 @@ function SchedulePage({tasks, canUpdate, onOpenProgress, error}) {
         </div>
       )}
       {canUpdate && <p className="progress-plan-note">Chọn thanh công việc để cập nhật tiến độ thực tế. Phần màu xanh thể hiện tỷ lệ đã hoàn thành.</p>}
-      {!loadingDependencies && !dependencyError && <>
-        <GanttChart
-          data={chartTasks}
-          onTaskSelect={canUpdate ? onOpenProgress : undefined}
-        />
-        <section className="panel table-panel" style={{ marginTop: 18 }}>
-          <div className="panel-head" style={{ padding: "18px 18px 0" }}>
-            <div><h2>Thứ tự công việc theo quan hệ phụ thuộc</h2><p>Quan hệ tiên quyết và công việc kế tiếp được hiển thị hai chiều.</p></div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Thứ tự</th><th>Công việc</th><th>Phụ thuộc vào</th><th>Công việc kế tiếp</th><th>Trạng thái xếp</th></tr></thead>
-              <tbody>
-                {orderedTasks.map(task => {
-                  const relationship = relationshipsById.get(task.id);
-                  const status = cycleIds.has(task.id) ? "Nằm trong vòng" : blockedIds.has(task.id) ? "Bị vòng chặn" : "Có thể xếp";
-                  return <tr key={task.id}>
-                    <td>{orderById.get(task.id) ?? "—"}</td>
-                    <td>{task.ten}</td>
-                    <td>{relationship.prerequisites.map(item => item.ten).join(", ") || "—"}</td>
-                    <td>{relationship.dependents.map(item => item.ten).join(", ") || "—"}</td>
-                    <td>{status}</td>
-                  </tr>;
-                })}
-                {!orderedTasks.length && <tr><td colSpan="5">Chưa có công việc.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </>}
+      {hasCycle && <div className="alert" role="alert">{scheduleMessage || "Dữ liệu công việc có vòng lặp phụ thuộc, không thể tính tiến độ."}</div>}
+      <section className="panel schedule-results-panel">
+        <div className="schedule-table-controls">
+          <label><input type="checkbox" checked={criticalOnly} onChange={event => setCriticalOnly(event.target.checked)}/> Chỉ hiện công việc găng</label>
+          <select aria-label="Sắp xếp bảng tiến độ" value={sortMode} onChange={event => setSortMode(event.target.value)}>
+            <option value="early-start">Thời điểm bắt đầu sớm nhất</option>
+            <option value="early-start-desc">Thời điểm bắt đầu muộn nhất</option>
+            <option value="delay-desc">Độ trễ giảm dần</option>
+          </select>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Công việc</th><th>ES</th><th>EF</th><th>LS</th><th>LF</th>
+              <th>Độ trễ</th><th>Trạng thái</th>
+            </tr></thead>
+            <tbody>
+              {sortedResults.map(result => (
+                <tr key={result.task_id}>
+                  <td>{result.ten}<small>{result.cong_trinh || "Chưa gán công trình"}</small></td>
+                  <td>{result.es}</td><td>{result.ef}</td><td>{result.ls}</td><td>{result.lf}</td>
+                  <td>{result.total_float} ngày</td>
+                  <td>{result.is_critical ? <span className="status done">Công việc găng</span> : <span className="status wait">Không găng</span>}</td>
+                </tr>
+              ))}
+              {!sortedResults.length && <tr><td colSpan="7">{hasCycle ? "Không thể hiển thị bảng do có vòng lặp phụ thuộc." : "Chưa có dữ liệu tiến độ."}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {!loadingDependencies && !dependencyError && <section className="panel table-panel" style={{ marginTop: 18 }}>
+        <div className="panel-head" style={{ padding: "18px 18px 0" }}>
+          <div><h2>Thứ tự công việc theo quan hệ phụ thuộc</h2><p>Quan hệ tiên quyết và công việc kế tiếp được hiển thị hai chiều.</p></div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Thứ tự</th><th>Công việc</th><th>Phụ thuộc vào</th><th>Công việc kế tiếp</th><th>Trạng thái xếp</th></tr></thead>
+            <tbody>
+              {orderedTasks.map(task => {
+                const relationship = relationshipsById.get(task.id);
+                const status = cycleIds.has(task.id) ? "Nằm trong vòng" : blockedIds.has(task.id) ? "Bị vòng chặn" : "Có thể xếp";
+                return <tr key={task.id}>
+                  <td>{orderById.get(task.id) ?? "—"}</td>
+                  <td>{task.ten}</td>
+                  <td>{relationship.prerequisites.map(item => item.ten).join(", ") || "—"}</td>
+                  <td>{relationship.dependents.map(item => item.ten).join(", ") || "—"}</td>
+                  <td>{status}</td>
+                </tr>;
+              })}
+              {!orderedTasks.length && <tr><td colSpan="5">Chưa có công việc.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>}
+      {!hasCycle && <GanttChart
+        data={chartTasks}
+        onTaskSelect={canUpdate ? onOpenProgress : undefined}
+      />}
     </div>
   );
 }

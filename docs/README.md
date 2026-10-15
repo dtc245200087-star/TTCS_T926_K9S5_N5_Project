@@ -97,3 +97,7 @@ Chọn **Quan hệ phụ thuộc (S-06)** ở thanh điều hướng để xem m
 ### Sắp xếp công việc và phát hiện vòng phụ thuộc (S-07)
 
 Mục **Tiến độ và đường găng** tải các quan hệ phụ thuộc theo từng hạng mục và sắp xếp công việc bằng thuật toán topo không đệ quy. Bảng quan hệ liệt kê cả công việc tiên quyết và công việc kế tiếp. Nếu dữ liệu có chu trình, giao diện đánh dấu riêng công việc thuộc vòng và công việc bị vòng chặn; các công việc này không được đánh số thứ tự thực hiện.
+
+## Bảng kết quả tiến độ
+
+Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.
