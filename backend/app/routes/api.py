@@ -266,6 +266,8 @@ def add_category_dependency(category_id):
         return jsonify({"error": "invalid_dependency", "message": "Hai công việc phụ thuộc không hợp lệ."}), 400
     try:
         milestone_data.add_dependency(_database_path(), task_id, depends_on_task_id)
+    except milestone_data.DependencyCycleError as error:
+        return jsonify({"error": "dependency_cycle", "message": str(error)}), 422
     except ValueError as error:
         return jsonify({"error": "invalid_dependency", "message": str(error)}), 400
     except sqlite3.IntegrityError:
