@@ -1,119 +1,92 @@
 from flask import Blueprint, request, jsonify
 from app.extensions import db
-from app.models.cong_viec import CongViec
-from app.models.nhat_ky import LichSuPhanCong, NhatKyKhoiLuong
+from app.models.cong_viec import CongViec, Team, TaskHistory
+from datetime import datetime
 
-# Khởi tạo Blueprint với tiền tố URL chung là /api
-cong_viec_bp = Blueprint('cong_viec_bp', __name__, url_prefix='/api')
+cong_viec_bp = Blueprint('cong_viec', __name__)
 
-# =========================================================================
-# FEATURE S-25: CHỈ HUY TRƯỞNG GIAO CÔNG VIỆC CHO ĐỘI THI CÔNG
-# =========================================================================
-@cong_viec_bp.route('/cong-viec/<int:id>/phan-cong', methods=['POST'])
-def phan_cong_cong_viec(id):
-    data = request.json or {}
-    doi_moi_id = data.get('doi_moi_id')
-    force_assign = data.get('force_assign', False)  # Xác nhận giao đè khi có cảnh báo
-    
-    cv = CongViec.query.get_or_404(id)
-    
-    # 1. Đếm số công việc trùng khoảng thời gian thi công của đội mới
-    cac_viec_trung = CongViec.query.filter(
-        CongViec.doi_thi_cong_id == doi_moi_id,
-        CongViec.id != id,
-        CongViec.tu_ngay <= cv.den_ngay,
-        CongViec.den_ngay >= cv.tu_ngay
-    ).all()
-    
-    overlap_count = len(cac_viec_trung)
-    
-    # 2. Cảnh báo nếu số việc trùng > 3 và người dùng chưa bấm xác nhận (force_assign = False)
-    if overlap_count > 3 and not force_assign:
+# 1. API Phân công công việc (Xử lý Cảnh báo quá tải + Ghi log lịch sử)
+@cong_viec_bp.route('/api/tasks/assign', methods=['POST'])
+def assign_task():
+    data = request.get_json() or {}
+    task_id = data.get('task_id')
+    team_id = data.get('team_id')
+    user_id = data.get('user_id', 1)  # ID Chỉ huy trưởng
+    confirm_overload = data.get('confirm_overload', False)
+
+    if not task_id or not team_id:
+        return jsonify({'error': 'Thiếu task_id hoặc team_id'}), 400
+
+    task = CongViec.query.get(task_id)
+    if not task:
+        return jsonify({'error': 'Không tìm thấy công việc'}), 404
+
+    target_team = Team.query.get(team_id)
+    if not target_team:
+        return jsonify({'error': 'Không tìm thấy đội thi công'}), 404
+
+    # Đếm số công việc trùng thời gian của đội được giao
+    # Công thức: tu_ngay_A < den_ngay_B AND den_ngay_A > tu_ngay_B
+    overlapping_count = CongViec.query.filter(
+        CongViec.doi_id == team_id,
+        CongViec.id != task_id,
+        CongViec.tu_ngay < task.den_ngay,
+        CongViec.den_ngay > task.tu_ngay
+    ).count()
+
+    # Cảnh báo khi có HƠN 3 công việc bị trùng thời gian (> 3)
+    if overlapping_count > 3 and not confirm_overload:
         return jsonify({
-            "status": "WARNING_OVERLOAD",
-            "overlap_count": overlap_count,
-            "message": f"Hệ thống cảnh báo: Đội này đang có {overlap_count} công việc chồng lấn thời gian. Bạn có chắc chắn muốn tiếp tục phân công?"
+            'warning': True,
+            'message': f'Đội "{target_team.name}" đang có {overlapping_count} công việc bị trùng thời gian. Bạn có muốn tiếp tục phân công?',
+            'overlapping_count': overlapping_count
         }), 200
-        
-    # 3. Tiến hành phân công & Ghi vết đổi đội vào CSDL (Audit Trail)
-    doi_cu_id = cv.doi_thi_cong_id
-    cv.doi_thi_cong_id = doi_moi_id
-    
-    ls = LichSuPhanCong(
-        cong_viec_id=id,
-        doi_cu_id=doi_cu_id,
-        doi_moi_id=doi_moi_id,
-        nguoi_thuc_hien=data.get('nguoi_thuc_hien', 'Chỉ huy trưởng')
-    )
-    
-    db.session.add(ls)
-    db.session.commit()
-    
+
+    # Tiến hành phân công và ghi vết lịch sử
+    old_team_id = task.doi_id
+
+    if old_team_id != team_id:
+        task.doi_id = team_id
+
+        # Lưu vết vào Audit Log
+        history = TaskHistory(
+            task_id=task.id,
+            old_team_id=old_team_id,
+            new_team_id=team_id,
+            changed_by_user_id=user_id,
+            changed_at=datetime.utcnow()
+        )
+        db.session.add(history)
+        db.session.commit()
+
     return jsonify({
-        "status": "SUCCESS",
-        "message": "Phân công công việc thành công và đã lưu lịch sử đổi đội!"
+        'success': True,
+        'message': f'Đã phân công thành công cho {target_team.name}'
     }), 200
 
 
-# =========================================================================
-# FEATURE S-26: ĐỘI TRƯỜNG XEM VIỆC & BÁO CÁO KHỐI LƯỢNG HÀNG NGÀY
-# =========================================================================
+# 2. API Xem công việc theo Đội (Dành cho Đội trưởng)
+@cong_viec_bp.route('/api/tasks/team/<int:team_id>', methods=['GET'])
+def get_team_tasks(team_id):
+    tasks = CongViec.query.filter_by(doi_id=team_id).all()
+    result = [{
+        'id': t.id,
+        'ten_cong_viec': t.ten_cong_viec,
+        'tu_ngay': t.tu_ngay.strftime('%Y-%m-%d %H:%M'),
+        'den_ngay': t.den_ngay.strftime('%Y-%m-%d %H:%M')
+    } for t in tasks]
+    return jsonify({'team_id': team_id, 'total': len(result), 'tasks': result}), 200
 
-# 1. Xem danh sách việc của Đội (Sắp xếp theo Ngày bắt đầu)
-@cong_viec_bp.route('/doi-thi-cong/<int:doi_id>/cong-viec', methods=['GET'])
-def lay_danh_sach_viec_doi(doi_id):
-    # Lấy danh sách việc của đội, sắp xếp tăng dần theo tu_ngay
-    ds_cong_viec = CongViec.query.filter_by(doi_thi_cong_id=doi_id)\
-        .order_by(CongViec.tu_ngay.asc()).all()
-    
-    result = []
-    for cv in ds_cong_viec:
-        # Tính tổng khối lượng lũy kế từ nhật ký báo cáo
-        reports = NhatKyKhoiLuong.query.filter_by(cong_viec_id=cv.id).all()
-        luy_ke = sum(r.khoi_luong_ngay for r in reports)
-        
-        result.append({
-            "id": cv.id,
-            "ten_cong_viec": cv.ten_cong_viec,
-            "tu_ngay": cv.tu_ngay.strftime('%Y-%m-%d'),
-            "den_ngay": cv.den_ngay.strftime('%Y-%m-%d'),
-            "is_critical": cv.is_critical,                  # Nhận biết công việc găng
-            "khoi_luong_ke_hoach": cv.khoi_luong_ke_hoach,
-            "khoi_luong_luy_ke": luy_ke
-        })
-        
-    return jsonify(result), 200
 
-# 2. Đội trưởng báo cáo khối lượng làm trong ngày
-@cong_viec_bp.route('/cong-viec/<int:id>/bao-cao-ngay', methods=['POST'])
-def bao_cao_khoi_luong_ngay(id):
-    data = request.json or {}
-    kl_ngay = float(data.get('khoi_luong_ngay', 0))
-    
-    cv = CongViec.query.get_or_404(id)
-    
-    # Lưu nhật ký (CSDL tự động ghi thời điểm tạo created_at)
-    nk = NhatKyKhoiLuong(
-        cong_viec_id=id,
-        khoi_luong_ngay=kl_ngay,
-        nguoi_bao_cao=data.get('nguoi_bao_cao', 'Đội trưởng')
-    )
-    db.session.add(nk)
-    db.session.commit()
-    
-    # Tính lại tổng khối lượng lũy kế
-    reports = NhatKyKhoiLuong.query.filter_by(cong_viec_id=id).all()
-    luy_ke_moi = sum(r.khoi_luong_ngay for r in reports)
-    
-    # Cảnh báo nếu lũy kế vượt khối lượng kế hoạch
-    warning = None
-    if luy_ke_moi > cv.khoi_luong_ke_hoach:
-        warning = f"Lưu ý: Khối lượng lũy kế ({luy_ke_moi}) đã vượt quá khối lượng kế hoạch ({cv.khoi_luong_ke_hoach})!"
-        
-    return jsonify({
-        "status": "SUCCESS",
-        "message": "Đã lưu báo cáo khối lượng thành công!",
-        "thoi_diem_bao_cao": nk.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-        "khoi_luong_luy_ke": luy_ke_moi,
-        "warning": warning
-    }), 200
+# 3. API Xem lịch sử đổi đội thi công (Audit Log)
+@cong_viec_bp.route('/api/tasks/<int:task_id>/history', methods=['GET'])
+def get_task_history(task_id):
+    logs = TaskHistory.query.filter_by(task_id=task_id).order_by(TaskHistory.changed_at.desc()).all()
+    result = [{
+        'id': log.id,
+        'old_team_id': log.old_team_id,
+        'new_team_id': log.new_team_id,
+        'changed_by_user_id': log.changed_by_user_id,
+        'changed_at': log.changed_at.strftime('%Y-%m-%d %H:%M:%S')
+    } for log in logs]
+    return jsonify({'task_id': task_id, 'history': result}), 200
