@@ -5,7 +5,11 @@ from pathlib import Path
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
 
+from . import migrations
 from .models import user as users
+from .models import cong_viec as tasks
+from .models import milestone as milestone_data
+from .models import nhat_ky as diaries
 from .routes.api import api
 from .routes.auth import auth
 
@@ -34,6 +38,9 @@ def create_app(test_config=None):
     db_path = Path(app.config["USER_DATABASE"])
     db_path.parent.mkdir(parents=True, exist_ok=True)
     users.initialize_database(str(db_path))
+    tasks.initialize_database(str(db_path))
+    migrations.upgrade_database(str(db_path))
+    milestone_data.initialize_database(str(db_path))
     if users.count_users(str(db_path)) == 0:
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
         password = os.environ.get("INITIAL_ADMIN_PASSWORD")
@@ -47,13 +54,14 @@ def create_app(test_config=None):
         users.create_user(
             str(db_path), username, os.environ.get("INITIAL_ADMIN_FULL_NAME", "Quản trị viên"), password, "admin"
         )
+    diaries.initialize_database(str(db_path))
 
     CORS(
         app,
         resources={r"/api/*": {"origins": app.config["FRONTEND_ORIGINS"]}},
         supports_credentials=True,
         allow_headers=["Content-Type", "X-CSRF-Token"],
-        methods=["GET", "POST", "PATCH", "OPTIONS"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
 
     @app.before_request
