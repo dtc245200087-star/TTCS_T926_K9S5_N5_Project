@@ -1,1 +1,4 @@
-# Khu vuc danh cho cac extension sau nay: SQLAlchemy, JWT...
+from flask_sqlalchemy import SQLAlchemy
+
+# Khởi tạo đối tượng db
+db = SQLAlchemy()
