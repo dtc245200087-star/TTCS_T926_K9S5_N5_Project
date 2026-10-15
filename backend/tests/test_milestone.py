@@ -55,8 +55,12 @@ class MilestoneModelTests(unittest.TestCase):
         milestone.assign_task(self.database_path, category["id"], second)
         milestone.add_dependency(self.database_path, second, first)
 
-        with self.assertRaisesRegex(ValueError, "vòng lặp"):
+        with self.assertRaisesRegex(milestone.DependencyCycleError, "vòng phụ thuộc"):
             milestone.add_dependency(self.database_path, first, second)
+        self.assertEqual(
+            milestone.list_dependencies(self.database_path, category["id"]),
+            [{"task_id": second, "depends_on_task_id": first}],
+        )
 
     def test_alert_query_only_returns_milestones_past_deadline(self):
         user_id = user.create_user(
@@ -116,6 +120,54 @@ class MilestoneModelTests(unittest.TestCase):
 
 
 class MilestoneAuthorizationTests(unittest.TestCase):
+    def test_cyclic_dependency_returns_422_with_task_names(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "users.db")
+            with patch.dict(os.environ, {
+                "INITIAL_ADMIN_USERNAME": "admin",
+                "INITIAL_ADMIN_PASSWORD": "test-admin-password",
+            }):
+                app = create_app({
+                    "TESTING": True,
+                    "SECRET_KEY": "test-secret",
+                    "USER_DATABASE": database_path,
+                })
+            category = milestone.create_category(
+                database_path, "Kết cấu", None, "2026-10-01"
+            )
+            tasks_by_name = {
+                task["ten"]: task["id"] for task in cong_viec.list_tasks(database_path)
+            }
+            first_name = "Chuẩn bị mặt bằng"
+            second_name = "Khảo sát và định vị công trình"
+            first, second = tasks_by_name[first_name], tasks_by_name[second_name]
+            milestone.assign_task(database_path, category["id"], first)
+            milestone.assign_task(database_path, category["id"], second)
+            milestone.add_dependency(database_path, second, first)
+
+            client = app.test_client()
+            csrf = client.get("/api/auth/csrf").get_json()["csrf_token"]
+            login_response = client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "test-admin-password"},
+                headers={"X-CSRF-Token": csrf},
+            )
+            csrf = login_response.get_json()["csrf_token"]
+            response = client.post(
+                f"/api/categories/{category['id']}/dependencies",
+                json={"task_id": first, "depends_on_task_id": second},
+                headers={"X-CSRF-Token": csrf},
+            )
+
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.get_json()["error"], "dependency_cycle")
+            self.assertIn(f"{first_name} chờ {second_name}", response.get_json()["message"])
+            self.assertIn(f"{second_name} lại chờ {first_name}", response.get_json()["message"])
+            self.assertEqual(
+                milestone.list_dependencies(database_path, category["id"]),
+                [{"task_id": second, "depends_on_task_id": first}],
+            )
+
     def test_progress_update_saves_category_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = str(Path(temp_dir) / "users.db")
