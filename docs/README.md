@@ -93,10 +93,16 @@ Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng m�
 
 Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
 
+## S-22 — Nhân lực, thiết bị và thời tiết theo ngày
+
+Mỗi công trình có một bản tổng hợp mỗi ngày để ghi số nhân lực, thiết bị sử dụng và thời tiết. Chọn **Mưa cả ngày** sẽ đặt thời tiết thành **Mưa**; dấu này được lưu riêng để phân biệt mưa cả ngày với mưa một phần ngày khi đối chiếu chậm tiến độ. API từ chối dấu mưa cả ngày nếu thời tiết không phải mưa. Cột SQLite mới được bổ sung tự động cho cơ sở dữ liệu hiện có.
+
+- `GET /api/nhat-ky/thong-tin-ngay?cong_trinh=...&ngay=YYYY-MM-DD` — xem tổng hợp.
+- `PUT /api/nhat-ky/thong-tin-ngay` — lưu nhân lực, thiết bị, thời tiết và cờ mưa cả ngày.
+
 ## S-21 — Nhật ký theo hạng mục
 
 Kỹ sư có thể ghi nội dung và giờ thực hiện cho từng hạng mục; mục vừa lưu xuất hiện ngay trong nhật ký của ngày. Có thể lọc theo ngày hoặc hạng mục, và không thể lưu mục nếu chưa gắn hạng mục. Trên điện thoại, bộ lọc và biểu mẫu xếp thành một cột, chữ lớn hơn và nút lưu có vùng chạm cao tối thiểu 52 px để dễ thao tác bằng một tay ngoài công trường.
-
 ## S-06 — Khai báo quan hệ phụ thuộc
 
 Chọn **Quan hệ phụ thuộc (S-06)** ở thanh điều hướng để xem mockup mô tả các yêu cầu của màn hình khai báo quan hệ công việc. Đây là giao diện mô phỏng; phần quản lý dữ liệu phụ thuộc cần được triển khai riêng.
