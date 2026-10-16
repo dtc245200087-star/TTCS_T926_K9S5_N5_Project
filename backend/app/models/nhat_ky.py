@@ -35,6 +35,7 @@ def initialize_database(database_path):
                 gio TEXT NOT NULL,
                 noi_dung TEXT NOT NULL,
                 nguoi_lap_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                client_uid TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS nhat_ky_anh (
@@ -50,7 +51,13 @@ def initialize_database(database_path):
             CREATE INDEX IF NOT EXISTS nhat_ky_muc_work_item ON nhat_ky_muc(cong_viec_id);
         """)
         day_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_ngay)").fetchall()}
+        entry_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_muc)").fetchall()}
         image_columns = {row[1] for row in db.execute("PRAGMA table_info(nhat_ky_anh)").fetchall()}
+        if "client_uid" not in entry_columns:
+            db.execute("ALTER TABLE nhat_ky_muc ADD COLUMN client_uid TEXT")
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS nhat_ky_muc_client_uid ON nhat_ky_muc(client_uid)"
+        )
         if "thumbnail_filename" not in image_columns:
             db.execute("ALTER TABLE nhat_ky_anh ADD COLUMN thumbnail_filename TEXT")
         if "upload_id" not in image_columns:
@@ -101,7 +108,7 @@ def list_entries(database_path, *, project=None, diary_date=None, work_item_id=N
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
         db.row_factory = sqlite3.Row
         rows = db.execute(
-            """SELECT e.id, d.cong_trinh, d.ngay, e.cong_viec_id,
+            """SELECT e.id, e.client_uid, d.cong_trinh, d.ngay, e.cong_viec_id,
                       t.ten AS hang_muc, e.gio, e.noi_dung,
                       COALESCE(u.full_name, 'Tài khoản đã xóa') AS nguoi_lap
                FROM nhat_ky_muc e
@@ -222,22 +229,41 @@ def update_daily_summary(database_path, *, project, diary_date, user_id, workfor
 
 
 def create_entry(database_path, *, project, diary_date, task_id, entry_time, description,
-                 user_id, images=()):
+                 user_id, images=(), client_uid=None):
     with sqlite3.connect(database_path, timeout=10) as db:
         db.execute("PRAGMA foreign_keys = ON")
-        diary_id = _get_or_create_day(db, project, diary_date, user_id)
-        cursor = db.execute(
-            """INSERT INTO nhat_ky_muc
-               (nhat_ky_ngay_id, cong_viec_id, gio, noi_dung, nguoi_lap_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (diary_id, task_id, entry_time, description, user_id),
-        )
-        entry_id = cursor.lastrowid
-        db.executemany(
-            """INSERT INTO nhat_ky_anh (nhat_ky_muc_id, filename, ghi_chu)
-               VALUES (?, ?, ?)""",
-            [(entry_id, image["filename"], image["ghi_chu"]) for image in images],
-        )
+        existing = None
+        if client_uid:
+            existing = db.execute(
+                "SELECT id FROM nhat_ky_muc WHERE client_uid = ?", (client_uid,)
+            ).fetchone()
+        if existing:
+            entry_id = existing[0]
+        else:
+            diary_id = _get_or_create_day(db, project, diary_date, user_id)
+            try:
+                cursor = db.execute(
+                    """INSERT INTO nhat_ky_muc
+                       (nhat_ky_ngay_id, cong_viec_id, gio, noi_dung, nguoi_lap_id, client_uid)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (diary_id, task_id, entry_time, description, user_id, client_uid),
+                )
+                entry_id = cursor.lastrowid
+            except sqlite3.IntegrityError:
+                if not client_uid:
+                    raise
+                existing = db.execute(
+                    "SELECT id FROM nhat_ky_muc WHERE client_uid = ?", (client_uid,)
+                ).fetchone()
+                if not existing:
+                    raise
+                entry_id = existing[0]
+            if not existing:
+                db.executemany(
+                    """INSERT INTO nhat_ky_anh (nhat_ky_muc_id, filename, ghi_chu)
+                       VALUES (?, ?, ?)""",
+                    [(entry_id, image["filename"], image["ghi_chu"]) for image in images],
+                )
         db.commit()
     return next((entry for entry in list_entries(database_path, project=project, diary_date=diary_date) if entry["id"] == entry_id), None)
 

@@ -464,6 +464,7 @@ def add_nhat_ky():
     work_item_id = data.get("cong_viec_id")
     entry_time = data.get("gio")
     description = data.get("noi_dung")
+    client_uid = data.get("client_uid")
     if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
         return jsonify({"error": "invalid_project", "message": "Hãy chọn công trình hợp lệ."}), 400
     if not isinstance(diary_date, str):
@@ -488,6 +489,10 @@ def add_nhat_ky():
         return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận phải theo định dạng HH:MM."}), 400
     if not isinstance(description, str) or not description.strip() or len(description.strip()) > 5000:
         return jsonify({"error": "invalid_description", "message": "Nội dung công việc là bắt buộc và tối đa 5000 ký tự."}), 400
+    if client_uid is not None and (
+        not isinstance(client_uid, str) or not client_uid.strip() or len(client_uid) > 64
+    ):
+        return jsonify({"error": "invalid_client_uid", "message": "Mã đồng bộ nhật ký không hợp lệ."}), 400
 
     entry = diaries.create_entry(
         current_app.config["USER_DATABASE"],
@@ -497,8 +502,9 @@ def add_nhat_ky():
         entry_time=entry_time,
         description=description.strip(),
         user_id=request.current_user["id"],
+        client_uid=client_uid,
     )
-    return jsonify(entry), 201
+    return jsonify(entry), 200 if entry.get("client_uid") == client_uid and client_uid else 201
 
 
 @api.post("/nhat-ky/<int:entry_id>/images")
