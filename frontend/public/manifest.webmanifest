@@ -1,0 +1,9 @@
+{
+  "name": "Điều hành thi công công trình",
+  "short_name": "Điều hành thi công",
+  "lang": "vi",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f5",
+  "theme_color": "#08794f"
+}
