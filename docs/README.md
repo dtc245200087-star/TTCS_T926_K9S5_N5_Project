@@ -93,6 +93,10 @@ Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng m�
 
 Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
 
+## S-21 — Nhật ký theo hạng mục
+
+Kỹ sư có thể ghi nội dung và giờ thực hiện cho từng hạng mục; mục vừa lưu xuất hiện ngay trong nhật ký của ngày. Có thể lọc theo ngày hoặc hạng mục, và không thể lưu mục nếu chưa gắn hạng mục. Trên điện thoại, bộ lọc và biểu mẫu xếp thành một cột, chữ lớn hơn và nút lưu có vùng chạm cao tối thiểu 52 px để dễ thao tác bằng một tay ngoài công trường.
+
 ## S-06 — Khai báo quan hệ phụ thuộc
 
 Chọn **Quan hệ phụ thuộc (S-06)** ở thanh điều hướng để xem mockup mô tả các yêu cầu của màn hình khai báo quan hệ công việc. Đây là giao diện mô phỏng; phần quản lý dữ liệu phụ thuộc cần được triển khai riêng.
