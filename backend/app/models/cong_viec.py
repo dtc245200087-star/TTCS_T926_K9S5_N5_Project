@@ -199,6 +199,7 @@ SCHEDULE_DEPENDENCIES = (
 
 def initialize_database(database_path):
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
         db.execute("""CREATE TABLE IF NOT EXISTS cong_viec (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ten TEXT NOT NULL,
@@ -241,6 +242,26 @@ def initialize_database(database_path):
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 needs_recalculation INTEGER NOT NULL DEFAULT 1,
                 dependencies_seeded INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS baselines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_by TEXT NOT NULL,
+                captured_at TEXT NOT NULL,
+                is_current INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_current IN (0, 1))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_baselines_single_current
+                ON baselines (is_current) WHERE is_current = 1;
+            CREATE TABLE IF NOT EXISTS baseline_details (
+                baseline_id INTEGER NOT NULL
+                    REFERENCES baselines(id) ON DELETE CASCADE,
+                task_id INTEGER NOT NULL,
+                ten TEXT NOT NULL,
+                es INTEGER NOT NULL,
+                ef INTEGER NOT NULL,
+                ls INTEGER NOT NULL,
+                lf INTEGER NOT NULL,
+                PRIMARY KEY (baseline_id, task_id)
             );
             INSERT OR IGNORE INTO schedule_state (id, needs_recalculation)
             VALUES (1, 1);

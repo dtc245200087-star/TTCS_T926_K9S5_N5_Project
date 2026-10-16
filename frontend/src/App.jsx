@@ -103,6 +103,12 @@ function App({ user, onLogout, onPasswordChanged }) {
   const [taskData, setTaskData] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [scheduleData, setScheduleData] = useState({ schedule_results: [], has_cycle: false, message: "" });
+  const [baseline, setBaseline] = useState(null);
+  const [baselineLoading, setBaselineLoading] = useState(false);
+  const [baselineError, setBaselineError] = useState(null);
+  const [baselineSaving, setBaselineSaving] = useState(false);
+  const [baselineSuccess, setBaselineSuccess] = useState(false);
+  const baselineSuccessTimer = useRef(null);
   const [tasksError, setTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState(null);
   const [progressForm, setProgressForm] = useState(null);
@@ -115,11 +121,26 @@ function App({ user, onLogout, onPasswordChanged }) {
 
   useEffect(() => { loadDashboard(); }, []);
 
+  useEffect(() => () => window.clearTimeout(baselineSuccessTimer.current), []);
+
   useEffect(() => {
     if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
     const loadSchedule = page === "Tiến độ và đường găng";
     let active = true;
     setTasksError("");
+    if (loadSchedule) {
+      setBaselineLoading(true);
+      setBaselineError(null);
+      apiFetch(`${API}/schedule-baseline`)
+        .then(async response => {
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.message || "Không thể tải kế hoạch gốc.");
+          return result.baseline;
+        })
+        .then(result => { if (active) setBaseline(result); })
+        .catch(error => { if (active) setBaselineError(error.message || "Không thể tải kế hoạch gốc."); })
+        .finally(() => { if (active) setBaselineLoading(false); });
+    }
     apiFetch(`${API}/${loadSchedule ? "schedule-results" : "cong-viec"}`)
       .then(response => {
         if (!response.ok) throw new Error("Không thể tải danh sách công việc.");
@@ -193,6 +214,34 @@ function App({ user, onLogout, onPasswordChanged }) {
   }
 
   const canManageCategories = ["admin", "manager"].includes(user.role);
+  const canManageBaseline = user.role === "admin" || user.role === "manager";
+
+  async function captureScheduleBaseline() {
+    setBaselineSaving(true);
+    setBaselineError(null);
+    setBaselineSuccess(false);
+    window.clearTimeout(baselineSuccessTimer.current);
+    try {
+      const response = await apiFetch(`${API}/schedule-baseline`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Không thể chốt kế hoạch gốc.");
+
+      setBaselineLoading(true);
+      const reloadResponse = await apiFetch(`${API}/schedule-baseline`);
+      const reloaded = await reloadResponse.json();
+      if (!reloadResponse.ok) {
+        throw new Error(reloaded.message || "Đã chốt nhưng không thể tải lại kế hoạch gốc.");
+      }
+      setBaseline(reloaded.baseline);
+      setBaselineSuccess(true);
+      baselineSuccessTimer.current = window.setTimeout(() => setBaselineSuccess(false), 2000);
+    } catch (error) {
+      setBaselineError(error.message || "Không thể kết nối máy chủ.");
+    } finally {
+      setBaselineLoading(false);
+      setBaselineSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (page !== "Công việc") return;
@@ -246,7 +295,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
-         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
+         page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError} baseline={baseline} baselineLoading={baselineLoading} baselineError={baselineError} baselineSaving={baselineSaving} baselineSuccess={baselineSuccess} canManageBaseline={canManageBaseline} onCaptureBaseline={captureScheduleBaseline}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
@@ -1037,6 +1086,13 @@ function Placeholder({title}) {
 function SchedulePage({
   tasks,
   scheduleResults = [],
+  baseline,
+  baselineLoading,
+  baselineError,
+  baselineSaving,
+  baselineSuccess,
+  canManageBaseline,
+  onCaptureBaseline,
   hasCycle,
   scheduleMessage,
   canUpdate,
@@ -1118,7 +1174,28 @@ function SchedulePage({
           <h1>Tiến độ và đường găng</h1>
           <p>Sơ đồ Gantt, đường găng và độ trễ của từng công việc.</p>
         </div>
+        {canManageBaseline && (
+          <button
+            type="button"
+            onClick={onCaptureBaseline}
+            disabled={baselineSaving}
+            style={{ backgroundColor: "#A8E6CF", color: "#2E5A4C", border: "1px solid #7BC4A8" }}
+            onMouseEnter={event => { event.currentTarget.style.backgroundColor = "#96DBC2"; }}
+            onMouseLeave={event => { event.currentTarget.style.backgroundColor = "#A8E6CF"; }}
+          >
+            {baselineSaving ? "Đang lưu..." : "Chốt kế hoạch gốc"}
+          </button>
+        )}
       </div>
+      {baselineLoading && <p role="status">Đang tải kế hoạch gốc...</p>}
+      {baselineError && <div className="alert" role="alert">{baselineError}</div>}
+      {baselineSuccess && <div className="success" role="status">Đã chốt kế hoạch gốc thành công.</div>}
+      {baseline && (
+        <p className="progress-plan-note">
+          Kế hoạch gốc đã chốt bởi {baseline.chot_boi} lúc{" "}
+          {new Date(baseline.chot_luc).toLocaleString("vi-VN", { timeZone: "UTC" })} UTC
+        </p>
+      )}
       {error && <div className="alert" role="alert">{error}</div>}
       {loadingDependencies && <p role="status">Đang tải quan hệ phụ thuộc…</p>}
       {dependencyError && <div className="alert" role="alert">{dependencyError} Không thể đảm bảo thứ tự hiển thị.</div>}
@@ -1186,6 +1263,7 @@ function SchedulePage({
       </section>}
       {!hasCycle && <GanttChart
         data={chartTasks}
+        baseline={baseline?.details}
         onTaskSelect={canUpdate ? onOpenProgress : undefined}
       />}
     </div>

@@ -9,20 +9,30 @@ const ROW_HEIGHT = 48;
 const BAR_HEIGHT = 22;
 const TOOLTIP_WIDTH = 220;
 const TOOLTIP_HEIGHT = 112;
+const BASELINE_TOOLTIP_HEIGHT = 146;
 
 function formatValue(value) {
   return value ?? "—";
 }
 
-export default function GanttChart({ data = [], onTaskSelect }) {
+export default function GanttChart({ data = [], baseline = null, onTaskSelect }) {
   const [activeId, setActiveId] = useState(null);
   const [unit, setUnit] = useState("day");
   const patternId = `gantt-critical-${useId().replace(/:/g, "")}`;
   const tasks = Array.isArray(data) ? data : [];
-  const maxDay = Math.max(1, ...tasks.flatMap(task => [Number(task.ef) || 0, Number(task.lf) || 0]));
-  const chartWidth = LABEL_WIDTH + (maxDay * PIXELS_PER_DAY) + RIGHT_PADDING;
+  const baselineDetails = Array.isArray(baseline) ? baseline : [];
+  const baselineByTaskId = new Map(
+    baselineDetails.map(detail => [detail.task_id, detail]),
+  );
+  const maxDay = Math.max(
+    1,
+    ...tasks.flatMap(task => [Number(task.ef) || 0, Number(task.lf) || 0]),
+    ...baselineDetails.flatMap(detail => [Number(detail.ef) || 0, Number(detail.lf) || 0]),
+  );
+  const chartWidth = Math.max(600, LABEL_WIDTH + (maxDay * PIXELS_PER_DAY) + RIGHT_PADDING);
   const xForDay = day => LABEL_WIDTH + Number(day) * PIXELS_PER_DAY;
-  const chartHeight = TOP_PADDING + tasks.length * ROW_HEIGHT + 124;
+  const chartHeight = TOP_PADDING + tasks.length * ROW_HEIGHT
+    + Math.max(TOOLTIP_HEIGHT, baselineDetails.length ? BASELINE_TOOLTIP_HEIGHT : 0) + 12;
   const tickStep = unit === "week" ? PIXELS_PER_WEEK / PIXELS_PER_DAY : maxDay <= 20 ? 1 : 5;
   const ticks = Array.from({ length: Math.floor(maxDay / tickStep) + 1 }, (_, index) => index * tickStep);
 
@@ -62,6 +72,11 @@ export default function GanttChart({ data = [], onTaskSelect }) {
           Tuần
         </button>
       </div>
+      {baselineDetails.length === 0 && (
+        <p style={{ margin: "0 0 10px", color: "#718078", fontSize: 12 }}>
+          Chưa có kế hoạch gốc — bấm 'Chốt kế hoạch gốc' để lưu
+        </p>
+      )}
       <svg
         aria-label="Biểu đồ Gantt tiến độ công việc"
         role="img"
@@ -82,6 +97,8 @@ export default function GanttChart({ data = [], onTaskSelect }) {
         </text>
         <rect x={LABEL_WIDTH} y="39" width="18" height="12" rx="2" fill={`url(#${patternId})`} stroke="#a83424" strokeWidth="2" />
         <text x={LABEL_WIDTH + 25} y="49" fill="#526158" fontSize="11">Công việc găng</text>
+        <rect x={LABEL_WIDTH + 145} y="42" width="18" height="6" rx="2" fill="#78827d" opacity="0.3" />
+        <text x={LABEL_WIDTH + 170} y="49" fill="#526158" fontSize="11">Kế hoạch gốc</text>
 
         {ticks.map(tick => {
           const x = xForDay(tick);
@@ -118,13 +135,15 @@ export default function GanttChart({ data = [], onTaskSelect }) {
           const isActive = activeId === task.id;
           const completion = Math.max(0, Math.min(100, Number(task.phan_tram_hoan_thanh) || 0));
           const completedWidth = barWidth * completion / 100;
+          const baselineTask = baselineByTaskId.get(task.id);
           const label = `${task.name}: ES ${formatValue(task.es)}, EF ${formatValue(task.ef)}, LS ${formatValue(task.ls)}, LF ${formatValue(task.lf)}, độ trễ ${formatValue(task.totalFloat)} ngày, hoàn thành ${completion}%${task.isCritical ? ", công việc găng" : ""}`;
           const canUpdateTask = Boolean(onTaskSelect && task.actualTask);
+          const tooltipHeight = baselineTask ? BASELINE_TOOLTIP_HEIGHT : TOOLTIP_HEIGHT;
           const tooltipX = Math.min(
             Math.max(startX + barWidth / 2 - TOOLTIP_WIDTH / 2, LABEL_WIDTH),
             chartWidth - RIGHT_PADDING - TOOLTIP_WIDTH,
           );
-          const aboveY = barY - TOOLTIP_HEIGHT - 10;
+          const aboveY = barY - tooltipHeight - 10;
           const belowY = barY + BAR_HEIGHT + 10;
           const tooltipY = aboveY >= TOP_PADDING + 10 ? aboveY : belowY;
           const fill = task.isCritical ? `url(#${patternId})` : "#20a16b";
@@ -133,6 +152,18 @@ export default function GanttChart({ data = [], onTaskSelect }) {
           return (
             <g key={task.id}>
               <text x="8" y={barY + BAR_HEIGHT / 2 + 4} fill="#34453d" fontSize="11">{task.name}</text>
+              {baselineTask && (
+                <rect
+                  x={xForDay(baselineTask.es)}
+                  y={barY + BAR_HEIGHT + 2}
+                  width={Math.max(xForDay(baselineTask.ef) - xForDay(baselineTask.es), 2)}
+                  height="6"
+                  rx="2"
+                  fill="#78827d"
+                  opacity="0.3"
+                  pointerEvents="none"
+                />
+              )}
               <g
                 role="button"
                 tabIndex={0}
@@ -204,18 +235,20 @@ export default function GanttChart({ data = [], onTaskSelect }) {
           const startX = xForDay(task.es);
           const endX = xForDay(task.ef);
           const barWidth = Math.max(endX - startX, 2);
+          const baselineTask = baselineByTaskId.get(task.id);
           const completion = Math.max(0, Math.min(100, Number(task.phan_tram_hoan_thanh) || 0));
+          const tooltipHeight = baselineTask ? BASELINE_TOOLTIP_HEIGHT : TOOLTIP_HEIGHT;
           const tooltipX = Math.min(
             Math.max(startX + barWidth / 2 - TOOLTIP_WIDTH / 2, LABEL_WIDTH),
             chartWidth - RIGHT_PADDING - TOOLTIP_WIDTH,
           );
-          const aboveY = barY - TOOLTIP_HEIGHT - 10;
+          const aboveY = barY - tooltipHeight - 10;
           const tooltipY = aboveY >= TOP_PADDING + 10 ? aboveY : barY + BAR_HEIGHT + 10;
           const tipId = `${patternId}-tip-${index}`;
 
           return (
             <g key={tipId} id={tipId} role="tooltip" pointerEvents="none">
-              <rect x={tooltipX} y={tooltipY} width={TOOLTIP_WIDTH} height={TOOLTIP_HEIGHT} rx="7" fill="#102d26" />
+              <rect x={tooltipX} y={tooltipY} width={TOOLTIP_WIDTH} height={tooltipHeight} rx="7" fill="#102d26" />
               <text x={tooltipX + 12} y={tooltipY + 19} fill="white" fontSize="11" fontWeight="700">{task.name}</text>
               <text x={tooltipX + 12} y={tooltipY + 38} fill="#e1eee7" fontSize="10">
                 ES: {formatValue(task.es)} · EF: {formatValue(task.ef)}
@@ -232,6 +265,16 @@ export default function GanttChart({ data = [], onTaskSelect }) {
               <text x={tooltipX + 12} y={tooltipY + 103} fill="#e1eee7" fontSize="9">
                 {task.isCritical ? "Công việc găng" : "Không găng"}
               </text>
+              {baselineTask && (
+                <>
+                  <text x={tooltipX + 12} y={tooltipY + 121} fill="#c8d2cc" fontSize="9">
+                    Kế hoạch gốc — ES: {formatValue(baselineTask.es)} · EF: {formatValue(baselineTask.ef)}
+                  </text>
+                  <text x={tooltipX + 12} y={tooltipY + 137} fill="#c8d2cc" fontSize="9">
+                    Kế hoạch gốc — LS: {formatValue(baselineTask.ls)} · LF: {formatValue(baselineTask.lf)}
+                  </text>
+                </>
+              )}
             </g>
           );
         })}

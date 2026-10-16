@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime
-from datetime import date
+from contextlib import closing
+from datetime import date, datetime, timezone
 import sqlite3
 from pathlib import Path
 import uuid
@@ -130,6 +130,96 @@ def get_schedule_results():
             "Dữ liệu công việc có vòng lặp phụ thuộc, không thể tính tiến độ."
             if has_cycle else ""
         ),
+    })
+
+
+@api.get("/schedule-baseline")
+@login_required
+def get_schedule_baseline():
+    with closing(sqlite3.connect(_database_path(), timeout=10)) as db:
+        db.row_factory = sqlite3.Row
+        baseline = db.execute(
+            """SELECT id, captured_by, captured_at
+               FROM baselines
+               WHERE is_current = 1"""
+        ).fetchone()
+        if baseline is None:
+            return jsonify({"baseline": None})
+
+        details = db.execute(
+            """SELECT task_id, ten, es, ef, ls, lf
+               FROM baseline_details
+               WHERE baseline_id = ?
+               ORDER BY task_id""",
+            (baseline["id"],),
+        ).fetchall()
+
+    return jsonify({
+        "baseline": {
+            "chot_boi": baseline["captured_by"],
+            "chot_luc": baseline["captured_at"],
+            "details": [dict(row) for row in details],
+        },
+    })
+
+
+@api.post("/schedule-baseline")
+@roles_required("admin", "manager")
+def create_schedule_baseline():
+    database = _database_path()
+    _, has_cycle = tasks.get_schedule_results(database)
+    if has_cycle:
+        return jsonify({
+            "error": "dependency_cycle",
+            "message": "Dữ liệu công việc có vòng lặp phụ thuộc, không thể chốt kế hoạch gốc.",
+        }), 400
+
+    captured_by = request.current_user["full_name"]
+    captured_at = datetime.now(timezone.utc).isoformat()
+    with closing(sqlite3.connect(database, timeout=10)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
+        db.row_factory = sqlite3.Row
+        db.execute("BEGIN IMMEDIATE")
+        state = db.execute(
+            "SELECT needs_recalculation FROM schedule_state WHERE id = 1"
+        ).fetchone()
+        if state is None or state["needs_recalculation"]:
+            db.rollback()
+            return jsonify({
+                "error": "schedule_changed",
+                "message": "Lịch công việc vừa thay đổi. Vui lòng thử chốt lại.",
+            }), 409
+
+        db.execute("UPDATE baselines SET is_current = 0 WHERE is_current = 1")
+        cursor = db.execute(
+            """INSERT INTO baselines (captured_by, captured_at, is_current)
+               VALUES (?, ?, 1)""",
+            (captured_by, captured_at),
+        )
+        baseline_id = cursor.lastrowid
+        db.execute(
+            """INSERT INTO baseline_details
+                   (baseline_id, task_id, ten, es, ef, ls, lf)
+               SELECT ?, cv.id, cv.ten, sr.es, sr.ef, sr.ls, sr.lf
+               FROM schedule_results AS sr
+               JOIN cong_viec AS cv ON cv.id = sr.task_id""",
+            (baseline_id,),
+        )
+        details = db.execute(
+            """SELECT task_id, ten, es, ef, ls, lf
+               FROM baseline_details
+               WHERE baseline_id = ?
+               ORDER BY task_id""",
+            (baseline_id,),
+        ).fetchall()
+        db.commit()
+
+    return jsonify({
+        "baseline": {
+            "chot_boi": captured_by,
+            "chot_luc": captured_at,
+            "details": [dict(row) for row in details],
+        },
     })
 
 
