@@ -21,6 +21,10 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.environ.get("SECRET_KEY") or os.urandom(24),
         SQLALCHEMY_DATABASE_URI=os.environ.get("DATABASE_URL") or f"sqlite:///{db_path}",
+        USER_DATABASE=os.environ.get(
+            "USER_DATABASE",
+            str(Path(__file__).resolve().parents[1] / "instance" / "users.db"),
+        ),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -35,8 +39,8 @@ def create_app(test_config=None):
     CORS(app)
 
     # 2. Đăng ký các Blueprint
-    app.register_blueprint(api)
-    app.register_blueprint(auth)
+    app.register_blueprint(api, url_prefix='/api')
+    app.register_blueprint(auth, url_prefix='/api/auth')
     app.register_blueprint(cong_viec_bp)  # Đăng ký Blueprint quản lý công việc S-25
 
     return app
