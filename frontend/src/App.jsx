@@ -1039,7 +1039,7 @@ function SettingsPage({ user, onPasswordChanged }) {
   }
 
   return <div className="content settings-content">
-    <div className="page-title"><div><h1>Cài đặt tài khoản</h1><p>Quản lý thông tin đăng nhập và vai trò truy cập.</p></div></div>
+    <div className="page-title"><div><h1>Cài đặt tài khoản </h1><p>Quản lý thông tin đăng nhập và vai trò truy cập.</p></div></div>
     {message && <div className="success" role="status">{message}</div>}{error && <div className="alert" role="alert">{error}</div>}
     <section className="panel settings-panel"><div className="panel-head"><h2>Đổi mật khẩu</h2></div>
       <form className="settings-form" onSubmit={changePassword}>
