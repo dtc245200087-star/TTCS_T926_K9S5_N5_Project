@@ -6,6 +6,8 @@ import {
   Menu, X, TrendingUp, UploadCloud, RotateCw
 } from "lucide-react";
 import { apiFetch } from "./api.js";
+import { useSyncQueue } from "./hooks/useSyncQueue.js";
+import SyncStatusWidget from "./components/SyncStatusWidget.jsx";
 import GanttChart from "./components/GanttChart";
 import CategoryTree from "./components/CategoryTree.jsx";
 import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
@@ -97,6 +99,7 @@ function formatFileSize(bytes) {
 }
 
 function App({ user, onLogout, onPasswordChanged }) {
+  const syncQueue = useSyncQueue();
   const [page, setPage] = useState("Tổng quan");
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
@@ -285,6 +288,7 @@ function App({ user, onLogout, onPasswordChanged }) {
           <div className="breadcrumb"><span>Hệ thống</span><b>/</b><strong>{page}</strong></div>
           <div className="header-actions">
             <div className="search"><Search size={18}/><input placeholder="Tìm kiếm..." /></div>
+            <SyncStatusWidget {...syncQueue}/>
             <button className="icon-btn"><Bell size={19}/><i></i></button>
             <div className="avatar">{user.full_name.slice(0, 2).toUpperCase()}</div>
             <button className="logout-btn" onClick={onLogout}>Đăng xuất</button>
@@ -300,7 +304,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
-         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
+         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} markItemSynced={syncQueue.markItemSynced}/> :
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
@@ -563,7 +567,7 @@ function Materials() {
   );
 }
 
-function Diary({canWrite}) {
+function Diary({canWrite, enqueueItems, markItemSynced}) {
   const today = new Date().toLocaleDateString("en-CA");
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -640,6 +644,7 @@ function Diary({canWrite}) {
         ? {...entry, images: [...(entry.images || []), payload]}
         : entry
       ));
+      await markItemSynced(`sync-image-${image.id}`);
       setSelectedImages(current => current.filter(item => item.id !== image.id));
       releasePreview(image.preview);
       return true;
@@ -656,6 +661,23 @@ function Diary({canWrite}) {
           }
           : item
       ));
+      try {
+        await enqueueItems([{
+          id: `sync-image-${image.id}`,
+          type: "image",
+          title: image.file.name,
+          payload: {
+            entryId,
+            fileName: image.file.name,
+            imageBlob: image.compressedBlob || image.file,
+            thumbnailBlob: image.thumbnailBlob || null,
+            note: image.note || "",
+            uploadId: image.id,
+          },
+        }]);
+      } catch (queueError) {
+        setError(queueError.message || "Không thể lưu ảnh vào hàng đợi trên thiết bị.");
+      }
       return false;
     } finally {
       window.clearTimeout(timeoutId);
@@ -718,16 +740,17 @@ function Diary({canWrite}) {
     setError("");
     setNotice("");
     setSaving(true);
+    const diaryPayload = {
+      ...form,
+      cong_trinh: project,
+      ngay: diaryDate,
+      cong_viec_id: Number(form.cong_viec_id),
+    };
     try {
       const response = await apiFetch(`${API}/nhat-ky`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          ...form,
-          cong_trinh: project,
-          ngay: diaryDate,
-          cong_viec_id: Number(form.cong_viec_id),
-        }),
+        body: JSON.stringify(diaryPayload),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
@@ -756,7 +779,40 @@ function Diary({canWrite}) {
         ? `Đã lưu nhật ký. ${failedCount} ảnh chưa tải được; nhấn “Tải lại” bên cạnh ảnh lỗi.`
         : "Đã lưu nhật ký và tải ảnh hiện trường.");
     } catch (e) {
-      setError(e.message);
+      const networkFailure = !navigator.onLine || e instanceof TypeError || e.name === "AbortError";
+      if (networkFailure) {
+        const diaryQueueId = `sync-diary-${crypto.randomUUID()}`;
+        const queuedItems = [{
+          id: diaryQueueId,
+          type: "diary",
+          title: `Nhật ký ${project} - ${diaryDate}`,
+          payload: diaryPayload,
+        }, ...selectedImages.map(image => ({
+          id: `sync-image-${image.id}`,
+          type: "image",
+          title: image.file.name,
+          payload: {
+            diaryQueueId,
+            fileName: image.file.name,
+            imageBlob: image.compressedBlob || image.file,
+            thumbnailBlob: image.thumbnailBlob || null,
+            note: imageNote.trim(),
+            uploadId: image.id,
+          },
+        }))];
+        try {
+          await enqueueItems(queuedItems);
+          selectedImages.forEach(image => releasePreview(image.preview));
+          setSelectedImages([]);
+          setForm(current => ({...current, noi_dung: ""}));
+          setImageNote("");
+          setNotice("Thiết bị đang ngoại tuyến. Nhật ký và ảnh đã lưu trong hàng đợi trên thiết bị.");
+        } catch (queueError) {
+          setError(queueError.message || "Không thể lưu nhật ký vào hàng đợi trên thiết bị.");
+        }
+      } else {
+        setError(e.message);
+      }
     } finally {
       setSaving(false);
     }
