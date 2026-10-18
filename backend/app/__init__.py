@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request, session
 from flask_cors import CORS
 
 from .extensions import db  # Bổ sung import db từ extensions
+from .models import cong_viec as tasks
 from .models import user as users
 from .routes.api import api
 from .routes.auth import auth
@@ -33,6 +34,10 @@ def create_app(test_config=None):
 
     if test_config:
         app.config.update(test_config)
+
+    user_database = Path(app.config["USER_DATABASE"])
+    user_database.parent.mkdir(parents=True, exist_ok=True)
+    tasks.initialize_database(str(user_database))
 
     # 1. Khởi tạo SQLAlchemy với app
     db.init_app(app)
