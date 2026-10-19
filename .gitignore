@@ -9,3 +9,6 @@ frontend/.vite/
 frontend/dist/
 backend/.venv/
 backend/__pycache__/
+backups/*
+!backups/.gitkeep
+restore-test/
