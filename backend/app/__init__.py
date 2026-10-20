@@ -35,9 +35,31 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
 
+    
     user_database = Path(app.config["USER_DATABASE"])
     user_database.parent.mkdir(parents=True, exist_ok=True)
+
+    users.initialize_database(str(user_database))
     tasks.initialize_database(str(user_database))
+
+    if users.count_users(str(user_database)) == 0:
+        username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
+        password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+
+        if not password or not 12 <= len(password) <= 256:
+            raise RuntimeError(
+                "INITIAL_ADMIN_PASSWORD phai co tu 12 den 256 ky tu."
+            )
+
+        users.create_user(
+            str(user_database),
+            username=username,
+            full_name=os.environ.get(
+                "INITIAL_ADMIN_FULL_NAME", "Quản trị viên"
+            ),
+            password=password,
+            role="admin",
+        )
 
     # 1. Khởi tạo SQLAlchemy với app
     db.init_app(app)
