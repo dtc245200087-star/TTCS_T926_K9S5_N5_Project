@@ -9,6 +9,7 @@ from .extensions import db  # Bổ sung import db từ extensions
 from .models import cong_viec as tasks
 from .models import user as users
 from .routes.api import api
+from .routes.acceptance import acceptance, initialize as initialize_acceptance
 from .routes.auth import auth
 from .routes.cong_viec_routes import cong_viec_bp
 
@@ -38,6 +39,7 @@ def create_app(test_config=None):
     user_database = Path(app.config["USER_DATABASE"])
     user_database.parent.mkdir(parents=True, exist_ok=True)
     tasks.initialize_database(str(user_database))
+    initialize_acceptance(str(user_database))
 
     # 1. Khởi tạo SQLAlchemy với app
     db.init_app(app)
@@ -45,6 +47,7 @@ def create_app(test_config=None):
 
     # 2. Đăng ký các Blueprint
     app.register_blueprint(api, url_prefix='/api')
+    app.register_blueprint(acceptance, url_prefix='/api')
     app.register_blueprint(auth, url_prefix='/api/auth')
     app.register_blueprint(cong_viec_bp)  # Đăng ký Blueprint quản lý công việc S-25
 
