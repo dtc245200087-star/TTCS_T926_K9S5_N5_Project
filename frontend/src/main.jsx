@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
+import ReloadPrompt from './ReloadPrompt.jsx';
 import { apiFetch, setCsrfToken, setUnauthorizedHandler } from './api.js';
 import { clearOfflineProfile, getOfflineProfile, saveOfflineProfile } from './offlineDiary.js';
 import './style.css';
 import './task-progress.css';
+import './pwa.css';
 
 function LoginGate() {
   const [user, setUser] = useState(null);
@@ -81,4 +83,9 @@ function LoginGate() {
   </main>;
 }
 
-createRoot(document.getElementById('root')).render(<LoginGate />);
+createRoot(document.getElementById('root')).render(
+  <>
+    <LoginGate />
+    <ReloadPrompt />
+  </>,
+);

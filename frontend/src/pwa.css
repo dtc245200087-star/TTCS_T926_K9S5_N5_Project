@@ -1,0 +1,28 @@
+.pwa-update {
+  position: fixed;
+  z-index: 20;
+  right: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: 16px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pwa-update-button {
+  max-width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 18px;
+  background: #102d26;
+  box-shadow: 0 8px 28px #102d2640;
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+  pointer-events: auto;
+}
+
+.pwa-update-button:focus-visible {
+  outline: 3px solid #76d7aa;
+  outline-offset: 3px;
+}
