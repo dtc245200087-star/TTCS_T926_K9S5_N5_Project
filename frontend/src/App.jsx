@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
@@ -20,6 +20,9 @@ import {
 import "./milestone.css";
 import "./task-progress.css";
 import S06DependencyPage from "./components/S06DependencyPage.jsx";
+import { useDiaryImageUploadQueue } from "./hooks/useDiaryImageUploadQueue.js";
+import DiaryImageUploadStatus from "./components/DiaryImageUploadStatus.jsx";
+import DiaryConflictModal from "./components/DiaryConflictModal.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -105,6 +108,14 @@ function formatFileSize(bytes) {
 
 function App({ user, offlineMode, onLogout, onPasswordChanged }) {
   const syncQueue = useSyncQueue();
+  const mockDiaryImageUrls = useRef(new Set());
+  const handleDiaryImageUploaded = useCallback((job, uploadedImage) => {
+    if (uploadedImage.url) mockDiaryImageUrls.current.add(uploadedImage.url);
+    window.dispatchEvent(new CustomEvent("diary-image-uploaded", {
+      detail: {entryId: job.entryId, image: uploadedImage},
+    }));
+  }, []);
+  const imageUploadQueue = useDiaryImageUploadQueue(handleDiaryImageUploaded);
   const [page, setPage] = useState("Tổng quan");
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
@@ -124,12 +135,20 @@ function App({ user, offlineMode, onLogout, onPasswordChanged }) {
   const [savingProgress, setSavingProgress] = useState(false);
   const canUpdateProgress = ["admin", "manager", "engineer"].includes(user.role);
 
+  useEffect(() => {
+    imageUploadQueue.resolveWaitingEntries(syncQueue.items);
+  }, [syncQueue.items, imageUploadQueue.resolveWaitingEntries]);
+
   const loadDashboard = () =>
     apiFetch(`${API}/dashboard`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setData).catch(() => setData(null));
 
   useEffect(() => { loadDashboard(); }, []);
 
   useEffect(() => () => window.clearTimeout(baselineSuccessTimer.current), []);
+
+  useEffect(() => () => {
+    for (const url of mockDiaryImageUrls.current) URL.revokeObjectURL(url);
+  }, []);
 
   useEffect(() => {
     if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
@@ -309,7 +328,18 @@ function App({ user, offlineMode, onLogout, onPasswordChanged }) {
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
-         page === "Nhật ký thi công" ? <Diary user={user} initialOffline={offlineMode} canWrite={["admin", "manager", "engineer"].includes(user.role)}/> :
+
+page === "Nhật ký thi công" ? (
+  <Diary
+    user={user}
+    initialOffline={offlineMode}
+    canWrite={["admin", "manager", "engineer"].includes(user.role)}
+    enqueueItems={syncQueue.enqueueItems}
+    markItemSynced={syncQueue.markItemSynced}
+    imageUploadQueue={imageUploadQueue}
+  />
+) :
+
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
@@ -572,7 +602,16 @@ function Materials() {
   );
 }
 
-function Diary({user, initialOffline, canWrite}) {
+
+function Diary({
+  user,
+  initialOffline,
+  canWrite,
+  enqueueItems,
+  markItemSynced,
+  imageUploadQueue
+}) {
+
   const today = new Date().toLocaleDateString("en-CA");
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -592,10 +631,20 @@ function Diary({user, initialOffline, canWrite}) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [isOnline, setIsOnline] = useState(navigator.onLine && !initialOffline);
-  const [storageInfo, setStorageInfo] = useState({pending: 0, usage: 0, quota: 0});
+
+  const [isOnline, setIsOnline] = useState(
+    navigator.onLine && !initialOffline
+  );
+  const [storageInfo, setStorageInfo] = useState({
+    pending: 0,
+    usage: 0,
+    quota: 0
+  });
   const [isSyncing, setIsSyncing] = useState(false);
   const syncLock = useRef(false);
+
+  const [sampleConflict, setSampleConflict] = useState(null);
+  const [conflictNotice, setConflictNotice] = useState("");
 
   useEffect(() => () => {
     for (const url of previewUrls.current) URL.revokeObjectURL(url);
@@ -621,6 +670,23 @@ function Diary({user, initialOffline, canWrite}) {
       window.removeEventListener("offline", offline);
     };
   }, [user.id]);
+  useEffect(() => {
+    const handleUploadedImage = event => {
+      const {entryId, image} = event.detail;
+      setEntries(current => current.map(entry => entry.id === entryId
+        ? {
+          ...entry,
+          images: [
+            ...(entry.images || []).filter(item => item.id !== image.id),
+            image,
+          ],
+        }
+        : entry
+      ));
+    };
+    window.addEventListener("diary-image-uploaded", handleUploadedImage);
+    return () => window.removeEventListener("diary-image-uploaded", handleUploadedImage);
+  }, []);
 
   function releasePreview(url) {
     if (!url) return;
@@ -651,72 +717,8 @@ function Diary({user, initialOffline, canWrite}) {
     }
   }
 
-  async function uploadImage(image, entryId) {
-    setSelectedImages(current => current.map(item =>
-      item.id === image.id ? {...item, status: "uploading", error: "", entryId} : item
-    ));
-    const timeoutController = new AbortController();
-    const timeoutId = window.setTimeout(() => timeoutController.abort(), 30000);
-    try {
-      const body = new FormData();
-      body.append("image", image.compressedBlob, "field-image.jpg");
-      body.append("thumbnail", image.thumbnailBlob, "field-thumbnail.jpg");
-      body.append("ghi_chu_anh", image.note || "");
-      body.append("upload_id", image.id);
-      const response = await apiFetch(`${API}/nhat-ky/${entryId}/images`, {
-        method: "POST",
-        body,
-        signal: timeoutController.signal,
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || "Tải ảnh thất bại.");
-      setEntries(current => current.map(entry => entry.id === entryId
-        ? {...entry, images: [...(entry.images || []), payload]}
-        : entry
-      ));
-      await markItemSynced(`sync-image-${image.id}`);
-      setSelectedImages(current => current.filter(item => item.id !== image.id));
-      releasePreview(image.preview);
-      return true;
-    } catch (uploadError) {
-      setSelectedImages(current => current.map(item =>
-        item.id === image.id
-          ? {
-            ...item,
-            status: "error",
-            entryId,
-            error: uploadError.name === "AbortError"
-              ? "Hết thời gian chờ. Kiểm tra mạng rồi tải lại."
-              : uploadError.message || "Lỗi mạng khi tải ảnh.",
-          }
-          : item
-      ));
-      try {
-        await enqueueItems([{
-          id: `sync-image-${image.id}`,
-          type: "image",
-          title: image.file.name,
-          payload: {
-            entryId,
-            fileName: image.file.name,
-            imageBlob: image.compressedBlob || image.file,
-            thumbnailBlob: image.thumbnailBlob || null,
-            note: image.note || "",
-            uploadId: image.id,
-          },
-        }]);
-      } catch (queueError) {
-        setError(queueError.message || "Không thể lưu ảnh vào hàng đợi trên thiết bị.");
-      }
-      return false;
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
-  }
-
   async function retryImage(image) {
-    const prepared = await prepareImage(image);
-    if (prepared?.entryId) await uploadImage(prepared, prepared.entryId);
+    await prepareImage(image);
   }
 
   function openLightbox(url, alt) {
@@ -763,6 +765,38 @@ function Diary({user, initialOffline, canWrite}) {
   const projectTasks = tasks.filter(task => task.cong_trinh === project);
   const remainingDrafts = Math.max(0, OFFLINE_DRAFT_LIMIT - storageInfo.pending);
   const storageNearlyFull = storageInfo.quota > 0 && storageInfo.usage / storageInfo.quota >= 0.8;
+  function openSampleConflict() {
+    const base = {
+      id: "sample-diary-32",
+      cong_trinh: project || "Công trình mẫu",
+      ngay: diaryDate,
+      gio: "09:30",
+      hang_muc: "Thi công móng khối A",
+      noi_dung: "Đã hoàn thành công tác chuẩn bị mặt bằng.",
+      thoi_tiet: "Nắng",
+      ghi_chu_thoi_tiet: "",
+    };
+    setConflictNotice("");
+    setSampleConflict({
+      title: "Mẫu mô phỏng · Nhật ký thi công móng",
+      base,
+      versionA: {
+        ...base,
+        noi_dung: "Đã hoàn thành chuẩn bị mặt bằng và lắp dựng cốp pha móng.",
+      },
+      versionB: {
+        ...base,
+        thoi_tiet: "Nhiều mây",
+        ghi_chu_thoi_tiet: "Có mưa nhẹ vào cuối buổi sáng.",
+        noi_dung: "Đã hoàn thành chuẩn bị mặt bằng và kiểm tra cao độ.",
+      },
+    });
+  }
+
+  function finishSampleConflict(resolvedVersion) {
+    setSampleConflict(null);
+    setConflictNotice(`Đã tạo phiên bản thống nhất trong bản xem thử: ${resolvedVersion.noi_dung}`);
+  }
   const loadEntries = () => {
     if (!project || !diaryDate) return;
     const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
@@ -894,12 +928,6 @@ function Diary({user, initialOffline, canWrite}) {
     setError("");
     setNotice("");
     setSaving(true);
-    const diaryPayload = {
-      ...form,
-      cong_trinh: project,
-      ngay: diaryDate,
-      cong_viec_id: Number(form.cong_viec_id),
-    };
     try {
       if (!project || !form.cong_viec_id || !form.noi_dung.trim()) {
         throw new Error("Hãy chọn công trình, hạng mục và nhập nội dung nhật ký.");
@@ -1037,7 +1065,9 @@ function Diary({user, initialOffline, canWrite}) {
           <h1>Nhật ký thi công</h1>
           <p>Ghi nhận hoạt động theo công trình, ngày và hạng mục công việc.</p>
         </div>
+        {import.meta.env.DEV && <button className="btn btn-primary" type="button" onClick={openSampleConflict}>Thử xung đột mẫu</button>}
       </div>
+      {conflictNotice && <div className="success" role="status">{conflictNotice}</div>}
       <section className="panel diary-panel">
         <div className="diary-filters">
           <label>Công trình<select value={project} onChange={e => setProject(e.target.value)}>{projects.map(item => <option key={item.id} value={item.ten}>{item.ten}</option>)}</select></label>
@@ -1133,6 +1163,14 @@ function Diary({user, initialOffline, canWrite}) {
               {image.status === "error" && !image.entryId && <button className="diary-retry" type="button" onClick={() => retryImage(image)}><RotateCw size={13}/> Thử nén lại</button>}
             </div>)}
           </div>}
+          <DiaryImageUploadStatus
+            items={imageUploadQueue.items}
+            isOnline={imageUploadQueue.isOnline}
+            isLoading={imageUploadQueue.isLoading}
+            error={imageUploadQueue.error}
+            onRetry={imageUploadQueue.retryImage}
+            onRemove={imageUploadQueue.removeImage}
+          />
         </div>
       </form>}
       {error && <div className="alert" role="alert">{error}</div>}
@@ -1162,6 +1200,11 @@ function Diary({user, initialOffline, canWrite}) {
         <button type="button" className="diary-lightbox-close" aria-label="Đóng ảnh" onClick={closeLightbox}><X/></button>
         <img src={lightbox.url} alt={lightbox.alt}/>
       </div>}
+      {sampleConflict && <DiaryConflictModal
+        conflict={sampleConflict}
+        onClose={() => setSampleConflict(null)}
+        onResolve={finishSampleConflict}
+      />}
     </div>
   );
 }
