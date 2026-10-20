@@ -259,6 +259,8 @@ def _get_or_create_day(db, project, diary_date, user_id):
         "SELECT id FROM nhat_ky_ngay WHERE cong_trinh = ? AND ngay = ?",
         (project, diary_date),
     ).fetchone()[0]
+
+
 from app.extensions import db
 from datetime import datetime
 

@@ -1,0 +1,128 @@
+.sync-widget {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  min-width: 195px;
+  max-width: 260px;
+  color: #526158;
+  font-size: 10px;
+}
+
+.sync-widget-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #24382f;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sync-widget-summary svg {
+  color: #08794f;
+}
+
+.sync-widget-time {
+  color: #84918a;
+  white-space: nowrap;
+}
+
+.sync-widget-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: #eaf6ef;
+  color: #08794f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.sync-widget-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.sync-widget-spinning {
+  animation: sync-widget-spin 1s linear infinite;
+}
+
+.sync-widget-details {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 7px);
+  left: 0;
+  width: min(320px, calc(100vw - 32px));
+  border: 1px solid #e2eae5;
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px #102d261a;
+}
+
+.sync-widget-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sync-widget-details ul {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sync-widget-details li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #edf1ee;
+  padding-top: 7px;
+}
+
+.sync-widget-details li span {
+  overflow-wrap: anywhere;
+}
+
+.sync-item-done {
+  color: #218053;
+  white-space: nowrap;
+}
+
+.sync-item-pending,
+.sync-widget-error {
+  color: #9d3227;
+}
+
+.sync-widget-error {
+  margin: 2px 0 0;
+}
+
+@keyframes sync-widget-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 700px) {
+  .sync-widget {
+    min-width: 0;
+    max-width: 150px;
+    gap: 2px;
+  }
+
+  .sync-widget-summary {
+    flex-wrap: wrap;
+    gap: 3px 6px;
+    white-space: normal;
+  }
+
+  .sync-widget-time {
+    max-width: 145px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

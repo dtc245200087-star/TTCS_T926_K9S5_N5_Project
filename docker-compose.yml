@@ -12,6 +12,21 @@ services:
       - "5001:5000"
     volumes:
       - backend_data:/app/instance
+  backup:
+    build: ./backend
+    profiles: ["backup"]
+    command: ["sh", "-c", "while true; do python scripts/backup_sqlite.py; sleep 86400; done"]
+    restart: unless-stopped
+    volumes:
+      - backend_data:/app/instance:ro
+      - ./backups:/backups
+  restore:
+    build: ./backend
+    profiles: ["restore"]
+    entrypoint: ["python", "scripts/restore_sqlite.py"]
+    volumes:
+      - ./backups:/backups:ro
+      - ./restore-test:/restore-test
   frontend:
     build: ./frontend
     environment:
