@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
@@ -15,7 +15,11 @@ import { sortTasksByDependencies } from "./dependencies.js";
 import "./milestone.css";
 import "./task-progress.css";
 import S06DependencyPage from "./components/S06DependencyPage.jsx";
+
 import AcceptancePage from "./components/AcceptancePage.jsx";
+import { useDiaryImageUploadQueue } from "./hooks/useDiaryImageUploadQueue.js";
+import DiaryImageUploadStatus from "./components/DiaryImageUploadStatus.jsx";
+import DiaryConflictModal from "./components/DiaryConflictModal.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -102,6 +106,14 @@ function formatFileSize(bytes) {
 
 function App({ user, onLogout, onPasswordChanged }) {
   const syncQueue = useSyncQueue();
+  const mockDiaryImageUrls = useRef(new Set());
+  const handleDiaryImageUploaded = useCallback((job, uploadedImage) => {
+    if (uploadedImage.url) mockDiaryImageUrls.current.add(uploadedImage.url);
+    window.dispatchEvent(new CustomEvent("diary-image-uploaded", {
+      detail: {entryId: job.entryId, image: uploadedImage},
+    }));
+  }, []);
+  const imageUploadQueue = useDiaryImageUploadQueue(handleDiaryImageUploaded);
   const [page, setPage] = useState("Tổng quan");
   const [mobile, setMobile] = useState(false);
   const [data, setData] = useState(null);
@@ -121,12 +133,20 @@ function App({ user, onLogout, onPasswordChanged }) {
   const [savingProgress, setSavingProgress] = useState(false);
   const canUpdateProgress = ["admin", "manager", "engineer"].includes(user.role);
 
+  useEffect(() => {
+    imageUploadQueue.resolveWaitingEntries(syncQueue.items);
+  }, [syncQueue.items, imageUploadQueue.resolveWaitingEntries]);
+
   const loadDashboard = () =>
     apiFetch(`${API}/dashboard`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setData).catch(() => setData(null));
 
   useEffect(() => { loadDashboard(); }, []);
 
   useEffect(() => () => window.clearTimeout(baselineSuccessTimer.current), []);
+
+  useEffect(() => () => {
+    for (const url of mockDiaryImageUrls.current) URL.revokeObjectURL(url);
+  }, []);
 
   useEffect(() => {
     if (page !== "Công việc" && page !== "Tiến độ và đường găng") return;
@@ -306,8 +326,10 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
-         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} markItemSynced={syncQueue.markItemSynced}/> :
+
+         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} imageUploadQueue={imageUploadQueue}/> :
          page === "Phiếu nghiệm thu" ? <AcceptancePage user={user}/> :
+
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
@@ -570,7 +592,7 @@ function Materials() {
   );
 }
 
-function Diary({canWrite, enqueueItems, markItemSynced}) {
+function Diary({canWrite, enqueueItems, imageUploadQueue}) {
   const today = new Date().toLocaleDateString("en-CA");
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -590,9 +612,29 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [sampleConflict, setSampleConflict] = useState(null);
+  const [conflictNotice, setConflictNotice] = useState("");
 
   useEffect(() => () => {
     for (const url of previewUrls.current) URL.revokeObjectURL(url);
+  }, []);
+
+  useEffect(() => {
+    const handleUploadedImage = event => {
+      const {entryId, image} = event.detail;
+      setEntries(current => current.map(entry => entry.id === entryId
+        ? {
+          ...entry,
+          images: [
+            ...(entry.images || []).filter(item => item.id !== image.id),
+            image,
+          ],
+        }
+        : entry
+      ));
+    };
+    window.addEventListener("diary-image-uploaded", handleUploadedImage);
+    return () => window.removeEventListener("diary-image-uploaded", handleUploadedImage);
   }, []);
 
   function releasePreview(url) {
@@ -624,72 +666,8 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
     }
   }
 
-  async function uploadImage(image, entryId) {
-    setSelectedImages(current => current.map(item =>
-      item.id === image.id ? {...item, status: "uploading", error: "", entryId} : item
-    ));
-    const timeoutController = new AbortController();
-    const timeoutId = window.setTimeout(() => timeoutController.abort(), 30000);
-    try {
-      const body = new FormData();
-      body.append("image", image.compressedBlob, "field-image.jpg");
-      body.append("thumbnail", image.thumbnailBlob, "field-thumbnail.jpg");
-      body.append("ghi_chu_anh", image.note || "");
-      body.append("upload_id", image.id);
-      const response = await apiFetch(`${API}/nhat-ky/${entryId}/images`, {
-        method: "POST",
-        body,
-        signal: timeoutController.signal,
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || "Tải ảnh thất bại.");
-      setEntries(current => current.map(entry => entry.id === entryId
-        ? {...entry, images: [...(entry.images || []), payload]}
-        : entry
-      ));
-      await markItemSynced(`sync-image-${image.id}`);
-      setSelectedImages(current => current.filter(item => item.id !== image.id));
-      releasePreview(image.preview);
-      return true;
-    } catch (uploadError) {
-      setSelectedImages(current => current.map(item =>
-        item.id === image.id
-          ? {
-            ...item,
-            status: "error",
-            entryId,
-            error: uploadError.name === "AbortError"
-              ? "Hết thời gian chờ. Kiểm tra mạng rồi tải lại."
-              : uploadError.message || "Lỗi mạng khi tải ảnh.",
-          }
-          : item
-      ));
-      try {
-        await enqueueItems([{
-          id: `sync-image-${image.id}`,
-          type: "image",
-          title: image.file.name,
-          payload: {
-            entryId,
-            fileName: image.file.name,
-            imageBlob: image.compressedBlob || image.file,
-            thumbnailBlob: image.thumbnailBlob || null,
-            note: image.note || "",
-            uploadId: image.id,
-          },
-        }]);
-      } catch (queueError) {
-        setError(queueError.message || "Không thể lưu ảnh vào hàng đợi trên thiết bị.");
-      }
-      return false;
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
-  }
-
   async function retryImage(image) {
-    const prepared = await prepareImage(image);
-    if (prepared?.entryId) await uploadImage(prepared, prepared.entryId);
+    await prepareImage(image);
   }
 
   function openLightbox(url, alt) {
@@ -712,6 +690,38 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
   }, []);
 
   const projectTasks = tasks.filter(task => task.cong_trinh === project);
+  function openSampleConflict() {
+    const base = {
+      id: "sample-diary-32",
+      cong_trinh: project || "Công trình mẫu",
+      ngay: diaryDate,
+      gio: "09:30",
+      hang_muc: "Thi công móng khối A",
+      noi_dung: "Đã hoàn thành công tác chuẩn bị mặt bằng.",
+      thoi_tiet: "Nắng",
+      ghi_chu_thoi_tiet: "",
+    };
+    setConflictNotice("");
+    setSampleConflict({
+      title: "Mẫu mô phỏng · Nhật ký thi công móng",
+      base,
+      versionA: {
+        ...base,
+        noi_dung: "Đã hoàn thành chuẩn bị mặt bằng và lắp dựng cốp pha móng.",
+      },
+      versionB: {
+        ...base,
+        thoi_tiet: "Nhiều mây",
+        ghi_chu_thoi_tiet: "Có mưa nhẹ vào cuối buổi sáng.",
+        noi_dung: "Đã hoàn thành chuẩn bị mặt bằng và kiểm tra cao độ.",
+      },
+    });
+  }
+
+  function finishSampleConflict(resolvedVersion) {
+    setSampleConflict(null);
+    setConflictNotice(`Đã tạo phiên bản thống nhất trong bản xem thử: ${resolvedVersion.noi_dung}`);
+  }
   const loadEntries = () => {
     if (!project || !diaryDate) return;
     const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
@@ -743,6 +753,8 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
     setError("");
     setNotice("");
     setSaving(true);
+    const selectedAtSave = selectedImages;
+    const imageNoteAtSave = imageNote.trim();
     const diaryPayload = {
       ...form,
       cong_trinh: project,
@@ -758,29 +770,26 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
       setForm(current => ({...current, noi_dung: ""}));
-      const draftImages = selectedImages.filter(image => !image.entryId);
-      const previousFailedImages = selectedImages.filter(image => image.entryId);
-      const imagesToUpload = draftImages.map(image => ({
-        ...image,
-        entryId: payload.id,
-        note: imageNote.trim(),
-      }));
-      setSelectedImages([...previousFailedImages, ...imagesToUpload]);
-      setImageNote("");
       setEntries(current => [payload, ...current.filter(entry => entry.id !== payload.id)]);
+      const imagesToUpload = selectedAtSave.filter(image => image.compressedBlob && image.thumbnailBlob);
       if (!imagesToUpload.length) {
         setNotice("Đã thêm mục nhật ký.");
         return;
       }
-      const results = await Promise.all(imagesToUpload.map(async image => {
-        const prepared = await prepareImage(image);
-        if (!prepared) return false;
-        return uploadImage(prepared, payload.id);
-      }));
-      const failedCount = results.filter(success => !success).length;
-      setNotice(failedCount
-        ? `Đã lưu nhật ký. ${failedCount} ảnh chưa tải được; nhấn “Tải lại” bên cạnh ảnh lỗi.`
-        : "Đã lưu nhật ký và tải ảnh hiện trường.");
+      try {
+        await imageUploadQueue.enqueueImages(imagesToUpload.map(image => ({
+          ...image,
+          entryId: payload.id,
+          note: imageNoteAtSave,
+        })));
+        const queuedIds = new Set(imagesToUpload.map(image => image.id));
+        imagesToUpload.forEach(image => releasePreview(image.preview));
+        setSelectedImages(current => current.filter(image => !queuedIds.has(image.id)));
+        setImageNote("");
+        setNotice(`Đã lưu nhật ký. ${imagesToUpload.length} ảnh được đưa vào hàng đợi tải nền.`);
+      } catch (queueError) {
+        setError(`Đã lưu nhật ký, nhưng không thể lưu ảnh vào hàng đợi: ${queueError.message}`);
+      }
     } catch (e) {
       const networkFailure = !navigator.onLine || e instanceof TypeError || e.name === "AbortError";
       if (networkFailure) {
@@ -790,26 +799,31 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
           type: "diary",
           title: `Nhật ký ${project} - ${diaryDate}`,
           payload: diaryPayload,
-        }, ...selectedImages.map(image => ({
-          id: `sync-image-${image.id}`,
-          type: "image",
-          title: image.file.name,
-          payload: {
-            diaryQueueId,
-            fileName: image.file.name,
-            imageBlob: image.compressedBlob || image.file,
-            thumbnailBlob: image.thumbnailBlob || null,
-            note: imageNote.trim(),
-            uploadId: image.id,
-          },
-        }))];
+        }];
         try {
           await enqueueItems(queuedItems);
-          selectedImages.forEach(image => releasePreview(image.preview));
-          setSelectedImages([]);
           setForm(current => ({...current, noi_dung: ""}));
           setImageNote("");
-          setNotice("Thiết bị đang ngoại tuyến. Nhật ký và ảnh đã lưu trong hàng đợi trên thiết bị.");
+          const imagesToWait = selectedAtSave.filter(image => image.compressedBlob && image.thumbnailBlob);
+          const imageIdsToClear = new Set();
+          let imageQueueNotice = "";
+          if (imagesToWait.length) {
+            try {
+              await imageUploadQueue.enqueueImages(imagesToWait.map(image => ({
+                ...image,
+                entryId: null,
+                diaryQueueId,
+                note: imageNoteAtSave,
+              })));
+              imagesToWait.forEach(image => releasePreview(image.preview));
+              imagesToWait.forEach(image => imageIdsToClear.add(image.id));
+              imageQueueNotice = " Ảnh được giữ riêng trên thiết bị và chỉ tải được sau khi có ID nhật ký từ máy chủ.";
+            } catch (imageQueueError) {
+              imageQueueNotice = ` Không lưu được hàng đợi ảnh: ${imageQueueError.message}`;
+            }
+          }
+          setSelectedImages(current => current.filter(image => !imageIdsToClear.has(image.id)));
+          setNotice(`Nhật ký đã lưu trong hàng đợi S-31.${imageQueueNotice}`);
         } catch (queueError) {
           setError(queueError.message || "Không thể lưu nhật ký vào hàng đợi trên thiết bị.");
         }
@@ -896,7 +910,9 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
           <h1>Nhật ký thi công</h1>
           <p>Ghi nhận hoạt động theo công trình, ngày và hạng mục công việc.</p>
         </div>
+        {import.meta.env.DEV && <button className="btn btn-primary" type="button" onClick={openSampleConflict}>Thử xung đột mẫu</button>}
       </div>
+      {conflictNotice && <div className="success" role="status">{conflictNotice}</div>}
       <section className="panel diary-panel">
         <div className="diary-filters">
           <label>Công trình<select value={project} onChange={e => setProject(e.target.value)}>{projects.map(item => <option key={item.id} value={item.ten}>{item.ten}</option>)}</select></label>
@@ -981,6 +997,14 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
               {image.status === "error" && !image.entryId && <button className="diary-retry" type="button" onClick={() => retryImage(image)}><RotateCw size={13}/> Thử nén lại</button>}
             </div>)}
           </div>}
+          <DiaryImageUploadStatus
+            items={imageUploadQueue.items}
+            isOnline={imageUploadQueue.isOnline}
+            isLoading={imageUploadQueue.isLoading}
+            error={imageUploadQueue.error}
+            onRetry={imageUploadQueue.retryImage}
+            onRemove={imageUploadQueue.removeImage}
+          />
         </div>
       </form>}
       {error && <div className="alert" role="alert">{error}</div>}
@@ -1005,6 +1029,11 @@ function Diary({canWrite, enqueueItems, markItemSynced}) {
         <button type="button" className="diary-lightbox-close" aria-label="Đóng ảnh" onClick={closeLightbox}><X/></button>
         <img src={lightbox.url} alt={lightbox.alt}/>
       </div>}
+      {sampleConflict && <DiaryConflictModal
+        conflict={sampleConflict}
+        onClose={() => setSampleConflict(null)}
+        onResolve={finishSampleConflict}
+      />}
     </div>
   );
 }
