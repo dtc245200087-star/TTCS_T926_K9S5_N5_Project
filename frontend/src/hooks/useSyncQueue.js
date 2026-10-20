@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch, setCsrfToken } from "../api.js";
 import {
   markPendingItemsSynced,
   readQueueState,
@@ -7,6 +8,7 @@ import {
 
 export function useSyncQueue() {
   const [items, setItems] = useState([]);
+  const syncLock = useRef(false);
   const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState(null);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [isLoading, setIsLoading] = useState(true);
@@ -65,22 +67,67 @@ export function useSyncQueue() {
     await refreshQueue();
   }, [refreshQueue]);
 
+  // S30_REAL_UPLOAD: never mark queued images synced without a server response.
   const syncNow = useCallback(async () => {
-    if (!isOnline || isSyncing) return false;
+    if (!navigator.onLine || syncLock.current) return false;
+    syncLock.current = true;
     setIsSyncing(true);
     setError("");
+    window.dispatchEvent(new Event("diary-sync-request"));
+    let succeeded = false;
     try {
-      const timestamp = new Date().toISOString();
-      const changed = await markPendingItemsSynced(timestamp);
-      await refreshQueue();
-      return changed;
+      const state = await readQueueState();
+      const pendingImages = state.items.filter(item => item.status === "pending" && item.type === "image");
+      if (!pendingImages.length) return true;
+      const csrfResponse = await apiFetch("/api/auth/csrf");
+      if (!csrfResponse.ok) throw new Error("Không xác thực được phiên đồng bộ ảnh.");
+      const csrf = await csrfResponse.json();
+      setCsrfToken(csrf.csrf_token);
+      for (const item of pendingImages) {
+        if (!navigator.onLine) break;
+        try {
+          const payload = item.payload;
+          const body = new FormData();
+          body.append("image", payload.imageBlob, payload.fileName || "image.jpg");
+          body.append("thumbnail", payload.thumbnailBlob || payload.imageBlob, "thumbnail.jpg");
+          body.append("ghi_chu_anh", payload.note || "");
+          body.append("upload_id", payload.uploadId);
+          const response = await apiFetch(`/api/nhat-ky/${payload.entryId}/images`, {
+            method: "POST", body,
+          });
+          if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.message || `Không gửi được ảnh (HTTP ${response.status}).`);
+          }
+          await markPendingItemsSynced(new Date().toISOString(), [item.id]);
+          succeeded = true;
+        } catch (uploadError) {
+          setError(uploadError.message || "Ảnh chưa được đồng bộ; sẽ thử lại.");
+          // A failed image must not block the others.
+        }
+      }
+      return succeeded;
     } catch (syncError) {
-      setError(syncError.message || "Không thể cập nhật trạng thái đồng bộ.");
+      setError(syncError.message || "Không thể đồng bộ hàng đợi.");
       return false;
     } finally {
+      await refreshQueue().catch(() => {});
+      syncLock.current = false;
       setIsSyncing(false);
     }
-  }, [isOnline, isSyncing, refreshQueue]);
+  }, [refreshQueue]);
+
+  useEffect(() => {
+    if (!isOnline) return undefined;
+    const retry = () => { syncNow(); };
+    window.addEventListener("online", retry);
+    const interval = window.setInterval(retry, 30_000);
+    retry();
+    return () => {
+      window.removeEventListener("online", retry);
+      window.clearInterval(interval);
+    };
+  }, [isOnline, syncNow]);
 
   const markItemSynced = useCallback(async itemId => {
     try {

@@ -812,6 +812,7 @@ function Diary({user, initialOffline, canWrite}) {
   };
   useEffect(() => { loadEntries(); }, [project, diaryDate, taskFilter]);
 
+  // S30_RETRY_QUEUE: retry independent drafts; an error must not block later drafts.
   async function syncOfflineDrafts() {
     if (!navigator.onLine || syncLock.current) return;
     syncLock.current = true;
@@ -819,11 +820,12 @@ function Diary({user, initialOffline, canWrite}) {
     let changed = false;
     try {
       const csrfResponse = await apiFetch(`${API}/auth/csrf`);
+      if (!csrfResponse.ok) throw new Error("Không khôi phục được phiên đồng bộ.");
       const csrfPayload = await csrfResponse.json();
-      if (!csrfResponse.ok) throw new Error(csrfPayload.message || "Không khôi phục được phiên đồng bộ.");
       setCsrfToken(csrfPayload.csrf_token);
       const drafts = await listOfflineDrafts({owner_id: user.id});
       for (const draft of drafts) {
+        if (!navigator.onLine) break;
         try {
           await updateOfflineDraft({...draft, sync_status: "syncing", sync_error: ""});
           const response = await apiFetch(`${API}/nhat-ky`, {
@@ -839,29 +841,41 @@ function Diary({user, initialOffline, canWrite}) {
             }),
           });
           const entry = await response.json();
-          if (!response.ok) throw new Error(entry.message || "Không đồng bộ được mục nhật ký.");
+          if (!response.ok || !entry?.id) {
+            throw new Error(entry?.message || `Không đồng bộ được nhật ký (HTTP ${response.status}).`);
+          }
+          // Reuse upload_id on retries: the server will not create duplicate photos.
           for (const image of draft.images || []) {
             const body = new FormData();
             body.append("image", image.blob, "field-image.jpg");
             body.append("thumbnail", image.thumbnail || image.blob, "field-thumbnail.jpg");
             body.append("ghi_chu_anh", image.note || "");
             body.append("upload_id", image.id);
-            const imageResponse = await apiFetch(`${API}/nhat-ky/${entry.id}/images`, {method: "POST", body});
-            const imageResult = await imageResponse.json();
-            if (!imageResponse.ok) throw new Error(imageResult.message || "Không đồng bộ được ảnh đính kèm.");
+            const imageResponse = await apiFetch(`${API}/nhat-ky/${entry.id}/images`, {
+              method: "POST", body,
+            });
+            if (!imageResponse.ok) {
+              const result = await imageResponse.json().catch(() => ({}));
+              throw new Error(result.message || `Không đồng bộ được ảnh (HTTP ${imageResponse.status}).`);
+            }
           }
+          // Delete only after the entry and ALL its images are acknowledged.
           await deleteOfflineDraft(draft.local_id);
           setEntries(current => current.filter(item => item.local_id !== draft.local_id));
           changed = true;
         } catch (syncError) {
-          await updateOfflineDraft({...draft, sync_status: "pending", sync_error: syncError.message || "Chưa đồng bộ được."}).catch(() => {});
-          if (syncError instanceof TypeError || !navigator.onLine) setIsOnline(false);
-          break;
+          await updateOfflineDraft({
+            ...draft, sync_status: "pending",
+            sync_error: syncError.message || "Chưa đồng bộ được.",
+          }).catch(() => {});
+          if (!navigator.onLine) setIsOnline(false);
+          // Continue: one invalid draft cannot block every other draft.
         }
       }
       if (changed) loadEntries();
     } catch (syncError) {
-      if (syncError instanceof TypeError || !navigator.onLine) setIsOnline(false);
+      setError(syncError.message || "Không kết nối được máy chủ đồng bộ.");
+      if (!navigator.onLine) setIsOnline(false);
     } finally {
       syncLock.current = false;
       setIsSyncing(false);
@@ -874,7 +888,13 @@ function Diary({user, initialOffline, canWrite}) {
     syncOfflineDrafts();
     const retry = () => syncOfflineDrafts();
     window.addEventListener("online", retry);
-    return () => window.removeEventListener("online", retry);
+    window.addEventListener("diary-sync-request", retry);
+    const interval = window.setInterval(retry, 30_000);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.removeEventListener("diary-sync-request", retry);
+      window.clearInterval(interval);
+    };
   }, [isOnline, user.id]);
 
   useEffect(() => {
