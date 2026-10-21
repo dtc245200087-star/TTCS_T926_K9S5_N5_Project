@@ -18,6 +18,7 @@ import S06DependencyPage from "./components/S06DependencyPage.jsx";
 import { useDiaryImageUploadQueue } from "./hooks/useDiaryImageUploadQueue.js";
 import DiaryImageUploadStatus from "./components/DiaryImageUploadStatus.jsx";
 import DiaryConflictModal from "./components/DiaryConflictModal.jsx";
+import AcceptanceApproval from "./components/AcceptanceApproval.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -35,6 +36,7 @@ const menu = [
   ["Công trình", Building2],
   ["Hạng mục", ClipboardList],
   ["Mốc bàn giao", CalendarDays],
+  ["Phiếu nghiệm thu", ClipboardList],
   ["Công việc", ClipboardList],
   ["Quan hệ phụ thuộc (S-06)", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
@@ -318,6 +320,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
+         page === "Phiếu nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError} baseline={baseline} baselineLoading={baselineLoading} baselineError={baselineError} baselineSaving={baselineSaving} baselineSuccess={baselineSuccess} canManageBaseline={canManageBaseline} onCaptureBaseline={captureScheduleBaseline}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
