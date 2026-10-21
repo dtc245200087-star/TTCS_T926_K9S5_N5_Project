@@ -1,45 +1,7 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Check, RotateCcw, X } from "lucide-react";
+import { mockDatabase } from "../mocks/mockDatabase.js";
 import "../acceptance-approval.css";
-
-const initialAcceptances = [
-  {
-    id: "NT-2026-014",
-    project: "Nhà điều hành khu A",
-    work: "Nghiệm thu cốt thép móng trục A-B",
-    submittedAt: "18/10/2026",
-    amount: 48500000,
-    status: "pending",
-    returnReason: "",
-  },
-  {
-    id: "NT-2026-013",
-    project: "Nhà điều hành khu A",
-    work: "Nghiệm thu bê tông sàn tầng 1",
-    submittedAt: "16/10/2026",
-    amount: 126000000,
-    status: "approved",
-    returnReason: "",
-  },
-  {
-    id: "NT-2026-012",
-    project: "Khối nhà xưởng B",
-    work: "Nghiệm thu lắp đặt cốt thép dầm",
-    submittedAt: "15/10/2026",
-    amount: 74200000,
-    status: "returned",
-    returnReason: "Bổ sung biên bản kiểm tra và ảnh hiện trường.",
-  },
-  {
-    id: "NT-2026-011",
-    project: "Khối nhà xưởng B",
-    work: "Nghiệm thu cốp pha cột tầng 2",
-    submittedAt: "12/10/2026",
-    amount: 63800000,
-    status: "pending",
-    returnReason: "",
-  },
-];
 
 const statusLabels = {
   pending: "Chờ duyệt",
@@ -54,7 +16,7 @@ const currency = new Intl.NumberFormat("vi-VN", {
 });
 
 export default function AcceptanceApproval({ canManage }) {
-  const [acceptances, setAcceptances] = useState(initialAcceptances);
+  const acceptances = useSyncExternalStore(mockDatabase.subscribe, mockDatabase.getAcceptances);
   const [returningId, setReturningId] = useState(null);
   const [returnReason, setReturnReason] = useState("");
   const [returnError, setReturnError] = useState("");
@@ -66,11 +28,7 @@ export default function AcceptanceApproval({ canManage }) {
   const returningAcceptance = acceptances.find(acceptance => acceptance.id === returningId);
 
   function approveAcceptance(id) {
-    setAcceptances(current => current.map(acceptance =>
-      acceptance.id === id && acceptance.status === "pending"
-        ? {...acceptance, status: "approved"}
-        : acceptance
-    ));
+    mockDatabase.approveAcceptance(id);
   }
 
   function openReturnModal(id) {
@@ -93,11 +51,7 @@ export default function AcceptanceApproval({ canManage }) {
       return;
     }
 
-    setAcceptances(current => current.map(acceptance =>
-      acceptance.id === returningId && acceptance.status === "pending"
-        ? {...acceptance, status: "returned", returnReason: reason}
-        : acceptance
-    ));
+    mockDatabase.returnAcceptance(returningId, reason);
     closeReturnModal();
   }
 
