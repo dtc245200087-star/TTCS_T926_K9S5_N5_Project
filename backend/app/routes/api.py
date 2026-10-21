@@ -410,10 +410,23 @@ def add_category_dependency(category_id):
     data = request.get_json(silent=True)
     task_id = data.get("task_id") if isinstance(data, dict) else None
     depends_on_task_id = data.get("depends_on_task_id") if isinstance(data, dict) else None
+    relationship_type = (
+        data.get("relationship_type", "FS") if isinstance(data, dict) else "FS"
+    )
     if not _integer_id(task_id) or not _integer_id(depends_on_task_id):
         return jsonify({"error": "invalid_dependency", "message": "Hai công việc phụ thuộc không hợp lệ."}), 400
+    if (
+        not isinstance(relationship_type, str)
+        or relationship_type not in tasks.RELATIONSHIP_TYPES
+    ):
+        return jsonify({
+            "error": "invalid_dependency",
+            "message": "Loại quan hệ phải là FS, SS, FF hoặc SF.",
+        }), 400
     try:
-        milestone_data.add_dependency(_database_path(), task_id, depends_on_task_id)
+        milestone_data.add_dependency(
+            _database_path(), task_id, depends_on_task_id, relationship_type
+        )
     except milestone_data.DependencyCycleError as error:
         return jsonify({"error": "dependency_cycle", "message": str(error)}), 422
     except ValueError as error:
