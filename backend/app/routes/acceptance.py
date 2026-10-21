@@ -23,6 +23,10 @@ def initialize(database_path):
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
         db.execute("PRAGMA foreign_keys=ON")
         db.executescript("""
+            CREATE TABLE IF NOT EXISTS acceptance_contract_limits (
+                task_id INTEGER PRIMARY KEY REFERENCES cong_viec(id),
+                contract_quantity TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS acceptance_batches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project TEXT NOT NULL,
@@ -82,9 +86,38 @@ def serialize_batch(db, batch):
 @login_required
 def tasks():
     with closing(connect()) as db:
-        rows = db.execute('SELECT id,ten,cong_trinh FROM cong_viec ORDER BY id').fetchall()
-        # S-26 reports via getattr defaults, not persisted quantity fields. Never fabricate measured values.
+        rows = db.execute("""SELECT cv.id, cv.ten, cv.cong_trinh, cl.contract_quantity
+            FROM cong_viec cv LEFT JOIN acceptance_contract_limits cl ON cl.task_id=cv.id
+            ORDER BY cv.id""").fetchall()
+        # S-26 currently lacks a reliable persisted measurement mapping; do not invent values.
         return jsonify([{**dict(row), 's26_measured': None} for row in rows])
+
+
+@acceptance.put('/acceptance/contracts/<int:task_id>')
+@roles_required('admin', 'manager')
+def set_contract_limit(task_id):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(message='Dữ liệu không hợp lệ.'), 400
+    try:
+        amount = decimal_number(payload.get('contract_quantity'))
+        if amount == 0:
+            raise ValueError('Khối lượng hợp đồng phải lớn hơn 0.')
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
+    with closing(connect()) as db:
+        db.execute('BEGIN IMMEDIATE')
+        task = db.execute('SELECT cong_trinh FROM cong_viec WHERE id=?', (task_id,)).fetchone()
+        if not task:
+            return jsonify(message='Không tìm thấy hạng mục.'), 404
+        current = previous_approved(db, task['cong_trinh'], task_id)
+        if amount < current:
+            return jsonify(message='Hợp đồng không được thấp hơn lũy kế đã duyệt.'), 409
+        db.execute("""INSERT INTO acceptance_contract_limits(task_id, contract_quantity)
+            VALUES(?, ?) ON CONFLICT(task_id) DO UPDATE
+            SET contract_quantity=excluded.contract_quantity""", (task_id, str(amount)))
+        db.commit()
+        return jsonify(task_id=task_id, contract_quantity=str(amount))
 
 
 @acceptance.get('/acceptance')
@@ -151,6 +184,12 @@ def approve_batch(batch_id):
             previous = previous_approved(db,batch['project'],line['task_id'],batch_id)
             if Decimal(line['cumulative']) < previous or Decimal(line['quantity']) != Decimal(line['cumulative'])-previous:
                 return jsonify(message='Khối lượng lũy kế đã thay đổi; cần lập phiếu mới.'), 409
+            contract = db.execute('SELECT contract_quantity FROM acceptance_contract_limits WHERE task_id=?',
+                                  (line['task_id'],)).fetchone()
+            if not contract:
+                return jsonify(message='Chưa thiết lập khối lượng hợp đồng cho hạng mục.'), 409
+            if Decimal(line['cumulative']) > Decimal(contract['contract_quantity']):
+                return jsonify(message='Lũy kế nghiệm thu vượt khối lượng hợp đồng.'), 409
         db.execute("UPDATE acceptance_batches SET status='approved' WHERE id=?",(batch_id,))
         db.commit()
         return jsonify(serialize_batch(db,db.execute('SELECT * FROM acceptance_batches WHERE id=?',(batch_id,)).fetchone()))
