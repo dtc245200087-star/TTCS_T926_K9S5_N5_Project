@@ -107,4 +107,6 @@ Mục **Tiến độ và đường găng** tải các quan hệ phụ thuộc th
 
 ## Bảng kết quả tiến độ
 
-Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.
+Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Thuật toán tính các quan hệ FS, SS, FF và SF; quan hệ cũ được migration thành FS. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.
+
+Kiểm thử `backend/tests/test_schedule_results.py` đối chiếu toàn bộ đáp án tính tay K-01 (10 công việc, ES/EF/LS/LF, độ trễ và đường găng), cùng một mạng có đủ bốn loại quan hệ và các nhánh song song có thời lượng khác nhau.

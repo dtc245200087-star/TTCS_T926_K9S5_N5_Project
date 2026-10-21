@@ -48,6 +48,84 @@ class ScheduleResultsTests(unittest.TestCase):
             count = db.execute("SELECT COUNT(*) FROM schedule_results").fetchone()[0]
         self.assertEqual(count, len(results))
 
+    def test_matches_every_k01_hand_calculated_schedule_value(self):
+        results, has_cycle = get_schedule_results(self.database)
+
+        self.assertFalse(has_cycle)
+        actual = {
+            row["ten"]: (
+                row["es"],
+                row["ef"],
+                row["ls"],
+                row["lf"],
+                row["total_float"],
+                bool(row["is_critical"]),
+            )
+            for row in results
+        }
+        expected = {
+            "Chuẩn bị mặt bằng": (0, 2, 0, 2, 0, True),
+            "Khảo sát và định vị công trình": (2, 3, 2, 3, 0, True),
+            "Đào móng": (3, 6, 3, 6, 0, True),
+            "Lắp đặt cốt thép": (6, 10, 6, 10, 0, True),
+            "Đổ bê tông móng": (10, 12, 10, 12, 0, True),
+            "Thi công kết cấu khung": (12, 17, 12, 17, 0, True),
+            "Kiểm tra vật tư": (2, 7, 13, 18, 11, False),
+            "Thi công hệ thống MEP âm": (17, 20, 17, 20, 0, True),
+            "Lắp đặt cửa sổ": (17, 19, 18, 20, 1, False),
+            "Hoàn thiện công trình": (20, 25, 20, 25, 0, True),
+        }
+        self.assertEqual(actual, expected)
+
+    def test_calculates_all_four_relationship_types_and_uneven_parallel_branches(self):
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("DELETE FROM cong_viec")
+            db.executemany(
+                """INSERT INTO cong_viec (id, ten, trang_thai, es, ef)
+                   VALUES (?, ?, 'Chờ xử lý', ?, ?)""",
+                [
+                    (101, "Start", 4, 8),
+                    (102, "SS branch", 0, 3),
+                    (103, "FF branch", 0, 2),
+                    (104, "SF branch", 0, 3),
+                    (105, "Join", 0, 2),
+                ],
+            )
+            db.executemany(
+                """INSERT INTO task_dependencies
+                   (task_id, depends_on_task_id, relationship_type)
+                   VALUES (?, ?, ?)""",
+                [
+                    (102, 101, "SS"),
+                    (103, 101, "FF"),
+                    (104, 101, "SF"),
+                    (105, 102, "FS"),
+                    (105, 103, "FF"),
+                ],
+            )
+            db.commit()
+
+        results, has_cycle = get_schedule_results(self.database)
+
+        self.assertFalse(has_cycle)
+        actual = {
+            row["ten"]: (
+                row["es"],
+                row["ef"],
+                row["ls"],
+                row["lf"],
+                row["total_float"],
+            )
+            for row in results
+        }
+        self.assertEqual(actual, {
+            "Start": (4, 8, 4, 8, 0),
+            "SS branch": (4, 7, 4, 7, 0),
+            "FF branch": (6, 8, 7, 9, 1),
+            "SF branch": (1, 4, 6, 9, 5),
+            "Join": (7, 9, 7, 9, 0),
+        })
+
     def test_task_schedule_changes_mark_results_for_recalculation(self):
         with closing(sqlite3.connect(self.database)) as db:
             db.execute(
@@ -81,7 +159,8 @@ class ScheduleResultsTests(unittest.TestCase):
                 row[1] for row in db.execute("PRAGMA table_info(task_dependencies)")
             }
             relation = db.execute(
-                "SELECT task_id, depends_on_task_id FROM task_dependencies "
+                "SELECT task_id, depends_on_task_id, relationship_type "
+                "FROM task_dependencies "
                 "WHERE task_id = ? AND depends_on_task_id = ?",
                 (
                     task_ids["Đổ bê tông móng"],
@@ -92,7 +171,11 @@ class ScheduleResultsTests(unittest.TestCase):
         self.assertNotIn("depends_on_id", columns)
         self.assertEqual(
             relation,
-            (task_ids["Đổ bê tông móng"], task_ids["Kiểm tra vật tư"]),
+            (
+                task_ids["Đổ bê tông móng"],
+                task_ids["Kiểm tra vật tư"],
+                "FS",
+            ),
         )
         _, has_cycle = get_schedule_results(self.database)
         self.assertFalse(has_cycle)
