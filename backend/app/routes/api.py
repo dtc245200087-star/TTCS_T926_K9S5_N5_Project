@@ -210,22 +210,17 @@ def add_nhat_ky():
             "message": "Mã đồng bộ nhật ký không hợp lệ."
         }), 400
 
+    
     entry = diaries.create_entry(
         database_path,
-
-           project=project,
+        project=project,
         diary_date=diary_date,
         task_id=work_item_id,
         entry_time=entry_time,
         description=description.strip(),
         user_id=request.current_user["id"],
-
         client_uid=client_uid,
     )
-
-    )
-    return jsonify(entry), 201
-
 
     status = (
         200
@@ -233,6 +228,7 @@ def add_nhat_ky():
         else 201
     )
     return jsonify(entry), status
+
 def _database_path():
     return current_app.config["USER_DATABASE"]
 
