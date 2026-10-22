@@ -1,0 +1,44 @@
+.acceptance-approval .page-title{gap:16px}
+.acceptance-demo-badge{flex:none;padding:7px 10px;border-radius:20px;background:#fff5df;color:#946511;font-size:10px;font-weight:700}
+.acceptance-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;margin-bottom:15px}
+.acceptance-summary-card{display:grid;gap:8px;padding:17px;background:#fff;border:1px solid #e7ece8;border-radius:11px}
+.acceptance-summary-card>span{font-size:11px;color:#748279}
+.acceptance-summary-card strong{font-size:23px;color:#176b43}
+.acceptance-summary-card small{font-size:10px;color:#89958e}
+.acceptance-readonly-note{margin-bottom:15px;padding:12px 14px;border:1px solid #dce9f4;border-radius:9px;background:#f1f7fc;color:#41627d;font-size:12px}
+.acceptance-list{padding:0;overflow:hidden}
+.acceptance-list>.panel-head{padding:18px 18px 0}
+.acceptance-table-wrap{overflow-x:auto}
+.acceptance-table-wrap table{min-width:850px}
+.acceptance-table-wrap th,.acceptance-table-wrap td{vertical-align:middle}
+.acceptance-table-wrap td strong{font-size:11px}
+.acceptance-table-wrap td small{font-size:10px;line-height:1.5}
+.acceptance-return-reason{color:#a34c28!important}
+.acceptance-status{display:inline-flex;padding:5px 9px;border-radius:20px;font-size:10px;font-weight:700;white-space:nowrap}
+.acceptance-status.pending{background:#fff5df;color:#946511}
+.acceptance-status.approved{background:#e5f6ed;color:#218053}
+.acceptance-status.returned{background:#fff0ef;color:#a22c23}
+.acceptance-actions{display:flex;gap:6px}
+.acceptance-actions button{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:7px 9px;border:0;border-radius:7px;font-size:10px;font-weight:700;white-space:nowrap}
+.acceptance-approve{background:#e5f6ed;color:#176e46}
+.acceptance-return{background:#fff0ef;color:#a22c23}
+.acceptance-no-action{color:#9aa59e}
+.acceptance-modal-backdrop{position:fixed;inset:0;z-index:30;display:grid;place-items:center;padding:18px;background:#10241fc2}
+.acceptance-modal{width:min(100%,480px);padding:22px;border-radius:14px;background:#fff;box-shadow:0 24px 80px #071a1470}
+.acceptance-modal-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}
+.acceptance-modal-header>div>span{color:#a22c23;font-size:10px;font-weight:800;letter-spacing:.8px}
+.acceptance-modal-header h2{margin:7px 0;font-size:18px;color:#20332a}
+.acceptance-modal-header p{margin:0;color:#718078;font-size:11px;line-height:1.5}
+.acceptance-modal-header>button{display:grid;place-items:center;width:34px;height:34px;flex:none;border:0;border-radius:8px;background:#f1f5f2;color:#43564b}
+.acceptance-modal form>label{display:block;margin-bottom:7px;color:#34453d;font-size:12px;font-weight:700}
+.acceptance-modal form>label strong{color:#b53228}
+.acceptance-modal textarea{display:block;width:100%;min-height:110px;resize:vertical;padding:11px 12px;border:1px solid #dce5df;border-radius:9px;color:#20332a;font:inherit;font-size:12px}
+.acceptance-modal textarea:focus{border-color:#0e9364;outline:0;box-shadow:0 0 0 3px #0e93641a}
+.acceptance-modal textarea[aria-invalid="true"]{border-color:#c7483e}
+.acceptance-form-error{margin:7px 0 0;color:#a22c23;font-size:11px}
+.acceptance-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.acceptance-modal footer button{padding:9px 12px;border-radius:8px;font-size:11px;font-weight:700}
+.acceptance-cancel{border:1px solid #dce5df;background:#fff;color:#47594f}
+.acceptance-confirm-return{border:0;background:#a22c23;color:#fff}
+.acceptance-modal button:focus-visible,.acceptance-actions button:focus-visible{outline:3px solid #0e936455;outline-offset:2px}
+@media(max-width:600px){.acceptance-approval .page-title{align-items:flex-start;flex-direction:column}.acceptance-summary{grid-template-columns:1fr}.acceptance-modal{padding:17px}}

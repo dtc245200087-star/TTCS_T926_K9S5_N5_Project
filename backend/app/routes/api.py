@@ -92,22 +92,55 @@ def get_vat_tu():
 @api.get("/nhat-ky")
 @login_required
 def get_nhat_ky():
-    return jsonify(nhat_ky)
+    return jsonify(diaries.list_entries(_database_path()))
 
 @api.post("/nhat-ky")
 @roles_required("admin", "manager", "engineer")
 def add_nhat_ky():
-    data = request.get_json() or {}
-    item = {
-        "id": max([x["id"] for x in nhat_ky], default=0) + 1,
-        "ngay": datetime.now().strftime("%Y-%m-%d"),
-        "cong_trinh": data.get("cong_trinh", ""),
-        "noi_dung": data.get("noi_dung", ""),
-        "nguoi_lap": data.get("nguoi_lap", "Quản trị viên")
-    }
-    nhat_ky.append(item)
-    return jsonify(item), 201
+    data = request.get_json(silent=True) if request.is_json else request.form.to_dict()
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
 
+    project = data.get("cong_trinh")
+    diary_date = data.get("ngay")
+    work_item_id = data.get("cong_viec_id")
+    entry_time = data.get("gio")
+    description = data.get("noi_dung")
+    if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
+        return jsonify({"error": "invalid_project", "message": "Hãy chọn công trình hợp lệ."}), 400
+    if not isinstance(diary_date, str):
+        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký là bắt buộc."}), 400
+    try:
+        if date.fromisoformat(diary_date).isoformat() != diary_date:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
+    if isinstance(work_item_id, bool) or not str(work_item_id).isdigit():
+        return jsonify({"error": "invalid_work_item", "message": "Mỗi mục nhật ký phải gắn với một hạng mục."}), 400
+    work_item_id = int(work_item_id)
+    task = next((item for item in tasks.list_tasks(current_app.config["USER_DATABASE"]) if item["id"] == work_item_id), None)
+    if not task or task.get("cong_trinh") != project:
+        return jsonify({"error": "invalid_work_item", "message": "Hạng mục không thuộc công trình đã chọn."}), 400
+    if not isinstance(entry_time, str):
+        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận là bắt buộc."}), 400
+    try:
+        if datetime.strptime(entry_time, "%H:%M").strftime("%H:%M") != entry_time:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận phải theo định dạng HH:MM."}), 400
+    if not isinstance(description, str) or not description.strip() or len(description.strip()) > 5000:
+        return jsonify({"error": "invalid_description", "message": "Nội dung công việc là bắt buộc và tối đa 5000 ký tự."}), 400
+
+    entry = diaries.create_entry(
+        current_app.config["USER_DATABASE"],
+        project=project,
+        diary_date=diary_date,
+        task_id=work_item_id,
+        entry_time=entry_time,
+        description=description.strip(),
+        user_id=request.current_user["id"],
+    )
+    return jsonify(entry), 201
 
 def _database_path():
     return current_app.config["USER_DATABASE"]
@@ -410,10 +443,23 @@ def add_category_dependency(category_id):
     data = request.get_json(silent=True)
     task_id = data.get("task_id") if isinstance(data, dict) else None
     depends_on_task_id = data.get("depends_on_task_id") if isinstance(data, dict) else None
+    relationship_type = (
+        data.get("relationship_type", "FS") if isinstance(data, dict) else "FS"
+    )
     if not _integer_id(task_id) or not _integer_id(depends_on_task_id):
         return jsonify({"error": "invalid_dependency", "message": "Hai công việc phụ thuộc không hợp lệ."}), 400
+    if (
+        not isinstance(relationship_type, str)
+        or relationship_type not in tasks.RELATIONSHIP_TYPES
+    ):
+        return jsonify({
+            "error": "invalid_dependency",
+            "message": "Loại quan hệ phải là FS, SS, FF hoặc SF.",
+        }), 400
     try:
-        milestone_data.add_dependency(_database_path(), task_id, depends_on_task_id)
+        milestone_data.add_dependency(
+            _database_path(), task_id, depends_on_task_id, relationship_type
+        )
     except milestone_data.DependencyCycleError as error:
         return jsonify({"error": "dependency_cycle", "message": str(error)}), 422
     except ValueError as error:
@@ -667,6 +713,11 @@ def update_nhat_ky_thong_tin_ngay():
     weather = data.get("thoi_tiet", "")
     if not isinstance(weather, str) or weather not in ("", "Nắng", "Nhiều mây", "Mưa", "Khác"):
         return jsonify({"error": "invalid_weather", "message": "Tình trạng thời tiết không hợp lệ."}), 400
+    all_day_rain = data.get("mua_ca_ngay", False)
+    if not isinstance(all_day_rain, bool):
+        return jsonify({"error": "invalid_all_day_rain", "message": "Đánh dấu mưa cả ngày không hợp lệ."}), 400
+    if all_day_rain and weather != "Mưa":
+        return jsonify({"error": "invalid_all_day_rain", "message": "Chỉ có thể đánh dấu mưa cả ngày khi thời tiết là Mưa."}), 400
     text_fields = (
         ("nhan_luc_ghi_chu", "Ghi chú nhân lực", 2000),
         ("thiet_bi", "Thiết bị", 4000),
@@ -687,5 +738,6 @@ def update_nhat_ky_thong_tin_ngay():
         equipment=data.get("thiet_bi", "").strip(),
         weather=weather,
         weather_notes=data.get("ghi_chu_thoi_tiet", "").strip(),
+        all_day_rain=all_day_rain,
     )
     return jsonify(summary)

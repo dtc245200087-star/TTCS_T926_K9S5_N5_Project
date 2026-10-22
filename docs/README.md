@@ -93,10 +93,16 @@ Chỉ vai trò `admin` và `manager` được tạo, sửa hoặc xóa hạng m�
 
 Khi tạo quan hệ phụ thuộc, hệ thống kiểm tra chu trình trên đồ thị tạm có thêm quan hệ mới. Quan hệ tạo vòng không được lưu; API trả mã `422` cùng thông báo mô tả chuỗi công việc bằng tên.
 
+## S-22 — Nhân lực, thiết bị và thời tiết theo ngày
+
+Mỗi công trình có một bản tổng hợp mỗi ngày để ghi số nhân lực, thiết bị sử dụng và thời tiết. Chọn **Mưa cả ngày** sẽ đặt thời tiết thành **Mưa**; dấu này được lưu riêng để phân biệt mưa cả ngày với mưa một phần ngày khi đối chiếu chậm tiến độ. API từ chối dấu mưa cả ngày nếu thời tiết không phải mưa. Cột SQLite mới được bổ sung tự động cho cơ sở dữ liệu hiện có.
+
+- `GET /api/nhat-ky/thong-tin-ngay?cong_trinh=...&ngay=YYYY-MM-DD` — xem tổng hợp.
+- `PUT /api/nhat-ky/thong-tin-ngay` — lưu nhân lực, thiết bị, thời tiết và cờ mưa cả ngày.
+
 ## S-21 — Nhật ký theo hạng mục
 
 Kỹ sư có thể ghi nội dung và giờ thực hiện cho từng hạng mục; mục vừa lưu xuất hiện ngay trong nhật ký của ngày. Có thể lọc theo ngày hoặc hạng mục, và không thể lưu mục nếu chưa gắn hạng mục. Trên điện thoại, bộ lọc và biểu mẫu xếp thành một cột, chữ lớn hơn và nút lưu có vùng chạm cao tối thiểu 52 px để dễ thao tác bằng một tay ngoài công trường.
-
 ## S-06 — Khai báo quan hệ phụ thuộc
 
 Chọn **Quan hệ phụ thuộc (S-06)** ở thanh điều hướng để xem mockup mô tả các yêu cầu của màn hình khai báo quan hệ công việc. Đây là giao diện mô phỏng; phần quản lý dữ liệu phụ thuộc cần được triển khai riêng.
@@ -107,4 +113,6 @@ Mục **Tiến độ và đường găng** tải các quan hệ phụ thuộc th
 
 ## Bảng kết quả tiến độ
 
-Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.
+Mục **Tiến độ và đường găng** gọi `GET /api/schedule-results` một lần để lấy danh sách công việc cùng các kết quả ES, EF, LS, LF, độ trễ và trạng thái công việc găng. Thuật toán tính các quan hệ FS, SS, FF và SF; quan hệ cũ được migration thành FS. Kết quả được lưu trong bảng SQLite `schedule_results`; các thay đổi kế hoạch công việc hoặc quan hệ phụ thuộc đánh dấu kết quả cần tính lại. Bảng cho phép lọc công việc găng và sắp xếp theo thời điểm bắt đầu sớm nhất. Nếu quan hệ phụ thuộc tạo thành vòng, API trả `has_cycle: true` cùng thông báo thay vì cung cấp kết quả tính không hợp lệ.
+
+Kiểm thử `backend/tests/test_schedule_results.py` đối chiếu toàn bộ đáp án tính tay K-01 (10 công việc, ES/EF/LS/LF, độ trễ và đường găng), cùng một mạng có đủ bốn loại quan hệ và các nhánh song song có thời lượng khác nhau.

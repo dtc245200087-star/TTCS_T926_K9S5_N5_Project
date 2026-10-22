@@ -2,6 +2,8 @@ import sqlite3
 from contextlib import closing
 from datetime import date, timedelta
 
+from .cong_viec import calculate_schedule
+
 
 def connect(database_path):
     db = sqlite3.connect(database_path, timeout=10)
@@ -26,6 +28,8 @@ def initialize_database(database_path):
             CREATE TABLE IF NOT EXISTS task_dependencies (
                 task_id INTEGER NOT NULL REFERENCES cong_viec(id) ON DELETE CASCADE,
                 depends_on_task_id INTEGER NOT NULL REFERENCES cong_viec(id) ON DELETE CASCADE,
+                relationship_type TEXT NOT NULL DEFAULT 'FS'
+                    CHECK (relationship_type IN ('FS', 'SS', 'FF', 'SF')),
                 PRIMARY KEY (task_id, depends_on_task_id),
                 CHECK (task_id != depends_on_task_id)
             );
@@ -49,6 +53,17 @@ def initialize_database(database_path):
         task_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(cong_viec)").fetchall()
         }
+        dependency_columns = {
+            row["name"] for row in db.execute(
+                "PRAGMA table_info(task_dependencies)"
+            ).fetchall()
+        }
+        if "relationship_type" not in dependency_columns:
+            db.execute(
+                """ALTER TABLE task_dependencies
+                   ADD COLUMN relationship_type TEXT NOT NULL DEFAULT 'FS'
+                       CHECK (relationship_type IN ('FS', 'SS', 'FF', 'SF'))"""
+            )
         if "category_id" not in task_columns:
             db.execute(
                 "ALTER TABLE cong_viec ADD COLUMN category_id INTEGER "
@@ -284,7 +299,7 @@ def unassign_task(database_path, task_id):
 def list_dependencies(database_path, category_id):
     with closing(connect(database_path)) as db:
         rows = db.execute(
-            """SELECT td.task_id, td.depends_on_task_id
+            """SELECT td.task_id, td.depends_on_task_id, td.relationship_type
                FROM task_dependencies td
                JOIN category_tasks current ON current.task_id = td.task_id
                WHERE current.category_id = ?
@@ -294,9 +309,14 @@ def list_dependencies(database_path, category_id):
         return [dict(row) for row in rows]
 
 
-def add_dependency(database_path, task_id, depends_on_task_id):
+def add_dependency(database_path, task_id, depends_on_task_id, relationship_type="FS"):
     if task_id == depends_on_task_id:
         raise ValueError("Công việc không thể phụ thuộc vào chính nó.")
+    if (
+        not isinstance(relationship_type, str)
+        or relationship_type not in {"FS", "SS", "FF", "SF"}
+    ):
+        raise ValueError("Loại quan hệ phải là FS, SS, FF hoặc SF.")
     with closing(connect(database_path)) as db:
         db.execute("BEGIN IMMEDIATE")
         assigned = db.execute(
@@ -340,8 +360,10 @@ def add_dependency(database_path, task_id, depends_on_task_id):
             )
 
         db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?, ?)",
-            (task_id, depends_on_task_id),
+            """INSERT INTO task_dependencies
+               (task_id, depends_on_task_id, relationship_type)
+               VALUES (?, ?, ?)""",
+            (task_id, depends_on_task_id, relationship_type),
         )
         db.commit()
 
@@ -407,57 +429,25 @@ def calculate_milestone(database_path, category_id, deadline):
         task_ids = list(tasks)
         task_placeholders = ",".join("?" for _ in task_ids)
         dependencies = db.execute(
-            f"""SELECT task_id, depends_on_task_id FROM task_dependencies
+            f"""SELECT task_id, depends_on_task_id, relationship_type
+                FROM task_dependencies
                 WHERE task_id IN ({task_placeholders})
                   AND depends_on_task_id IN ({task_placeholders})""",
             task_ids + task_ids,
         ).fetchall()
-        if find_dependency_cycle(dependencies):
+        schedule = calculate_schedule(tasks, dependencies)
+        if schedule is None:
             raise ValueError("Phát hiện vòng lặp trong quan hệ phụ thuộc công việc.")
-        if find_dependency_cycle(dependencies):
-            raise ValueError("Phát hiện vòng lặp trong quan hệ phụ thuộc công việc.")
-        predecessors = {task_id: [] for task_id in tasks}
-        successors = {task_id: [] for task_id in tasks}
-        for relation in dependencies:
-            task_id = relation["task_id"]
-            predecessor_id = relation["depends_on_task_id"]
-            if task_id in tasks and predecessor_id in tasks:
-                predecessors[task_id].append(predecessor_id)
-                successors[predecessor_id].append(task_id)
-
-        remaining = {task_id: len(items) for task_id, items in predecessors.items()}
-        ready = sorted(task_id for task_id, count in remaining.items() if count == 0)
-        finish_offsets, paths = {}, {}
-        while ready:
-            task_id = ready.pop(0)
-            duration = tasks[task_id]["ef"] - tasks[task_id]["es"]
-            predecessor_id = max(
-                predecessors[task_id],
-                key=lambda item: (finish_offsets[item], -item),
-                default=None,
-            )
-            dependency_finish = (
-                finish_offsets[predecessor_id] + duration
-                if predecessor_id is not None else 0
-            )
-            finish_offsets[task_id] = max(tasks[task_id]["ef"], dependency_finish)
-            paths[task_id] = (
-                paths[predecessor_id] if predecessor_id is not None else []
-            ) + [task_id]
-            for successor_id in successors[task_id]:
-                remaining[successor_id] -= 1
-                if remaining[successor_id] == 0:
-                    ready.append(successor_id)
-            ready.sort()
-
-        terminal_tasks = [task_id for task_id in tasks if not successors[task_id]]
-        final_task_id = max(
-            terminal_tasks,
-            key=lambda item: (finish_offsets[item], -item),
-        )
+        final_task_id = schedule["terminal_task"]
+        delay_chain = []
+        while final_task_id is not None:
+            delay_chain.append(final_task_id)
+            final_task_id = schedule["critical_predecessor"].get(final_task_id)
+        delay_chain.reverse()
+        final_task_id = schedule["terminal_task"]
         projected_finish = (
             date.fromisoformat(category["planned_start_date"])
-            + timedelta(days=finish_offsets[final_task_id])
+            + timedelta(days=schedule["results"][final_task_id]["ef"])
         )
         due_date = date.fromisoformat(deadline)
         overrun_days = max((projected_finish - due_date).days, 0)
@@ -467,7 +457,7 @@ def calculate_milestone(database_path, category_id, deadline):
             "deadline": deadline,
             "projected_finish": projected_finish.isoformat(),
             "overrun_days": overrun_days,
-            "delay_chain": [tasks[task_id]["ten"] for task_id in paths[final_task_id]],
+            "delay_chain": [tasks[task_id]["ten"] for task_id in delay_chain],
         }
 
 

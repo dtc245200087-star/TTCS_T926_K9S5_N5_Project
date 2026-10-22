@@ -7,6 +7,7 @@ from flask_cors import CORS
 
 from .extensions import db  # Bổ sung import db từ extensions
 from .models import cong_viec as tasks
+from .models import milestone as milestones
 from .models import user as users
 from .routes.api import api
 from .routes.acceptance import acceptance, initialize as initialize_acceptance
@@ -42,6 +43,7 @@ def create_app(test_config=None):
     # Khởi tạo bảng tài khoản trước khi tạo dữ liệu khác
     users.initialize_database(str(user_database))
     tasks.initialize_database(str(user_database))
+    milestones.initialize_database(str(user_database))
 
 
     # Chỉ tạo admin lần đầu, không ghi đè tài khoản cũ

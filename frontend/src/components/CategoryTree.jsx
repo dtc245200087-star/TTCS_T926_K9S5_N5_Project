@@ -3,6 +3,12 @@ import { CalendarDays, FolderPlus, Link2, Plus, Trash2, Unlink, X } from "lucide
 import { apiFetch } from "../api.js";
 
 const API = "/api";
+const RELATIONSHIP_LABELS = {
+  FS: "FS — kết thúc → bắt đầu",
+  SS: "SS — bắt đầu → bắt đầu",
+  FF: "FF — kết thúc → kết thúc",
+  SF: "SF — bắt đầu → kết thúc",
+};
 
 function flattenCategories(categories, result = []) {
   for (const category of categories) {
@@ -156,6 +162,7 @@ function CategoryNode({ category, canManage, unassignedTasks, allCategories, onS
   const [selectedTask, setSelectedTask] = useState("");
   const [taskId, setTaskId] = useState("");
   const [predecessorId, setPredecessorId] = useState("");
+  const [relationshipType, setRelationshipType] = useState("FS");
   const [error, setError] = useState("");
   const categoryTasks = category.tasks || [];
 
@@ -187,12 +194,14 @@ function CategoryNode({ category, canManage, unassignedTasks, allCategories, onS
         body: JSON.stringify({
           task_id: Number(taskId),
           depends_on_task_id: Number(predecessorId),
+          relationship_type: relationshipType,
         }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Không thể thêm quan hệ phụ thuộc.");
       setTaskId("");
       setPredecessorId("");
+      setRelationshipType("FS");
       await onRefresh();
     } catch (saveError) {
       setError(saveError.message || "Không thể kết nối máy chủ.");
@@ -277,12 +286,22 @@ function CategoryNode({ category, canManage, unassignedTasks, allCategories, onS
               {categoryTasks.filter(task => String(task.id) !== taskId).map(task => <option value={task.id} key={task.id}>{task.task_name}</option>)}
             </select>
           </label>
+          <label>Loại quan hệ
+            <select value={relationshipType} onChange={event => setRelationshipType(event.target.value)}>
+              {Object.entries(RELATIONSHIP_LABELS).map(([type, label]) => (
+                <option value={type} key={type}>{label}</option>
+              ))}
+            </select>
+          </label>
           <button className="btn btn-primary" disabled={!taskId || !predecessorId}><Link2 size={14}/> Tạo liên kết</button>
         </form>}
         {category.dependencies?.length > 0 && <ul className="dependency-list">
           {category.dependencies.map(dependency => (
             <li key={`${dependency.task_id}-${dependency.depends_on_task_id}`}>
-              <span>{taskNames[dependency.depends_on_task_id]} → {taskNames[dependency.task_id]}</span>
+              <span>
+                {taskNames[dependency.depends_on_task_id]} → {taskNames[dependency.task_id]}
+                {" "}({RELATIONSHIP_LABELS[dependency.relationship_type] || dependency.relationship_type})
+              </span>
               <button className="icon-action" aria-label="Xóa quan hệ phụ thuộc" onClick={() => removeDependency(dependency)}><X size={14}/></button>
             </li>
           ))}
