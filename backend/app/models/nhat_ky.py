@@ -261,18 +261,7 @@ def create_entry(database_path, *, project, diary_date, task_id, entry_time, des
                (nhat_ky_ngay_id, cong_viec_id, gio, noi_dung, nguoi_lap_id, client_uid)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (diary_id, task_id, entry_time, description, user_id, client_uid),
-
-                 user_id, images=()):
-    with sqlite3.connect(database_path, timeout=10) as db:
-        db.execute("PRAGMA foreign_keys = ON")
-        diary_id = _get_or_create_day(db, project, diary_date, user_id)
-        cursor = db.execute(
-            """INSERT INTO nhat_ky_muc
-               (nhat_ky_ngay_id, cong_viec_id, gio, noi_dung, nguoi_lap_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (diary_id, task_id, entry_time, description, user_id),
-
-        )
+                      )
         entry_id = cursor.lastrowid
         db.executemany(
             """INSERT INTO nhat_ky_anh (nhat_ky_muc_id, filename, ghi_chu)
