@@ -9,3 +9,5 @@ frontend/.vite/
 frontend/dist/
 backend/.venv/
 backend/__pycache__/
+node_modules/
+.DS_Store
