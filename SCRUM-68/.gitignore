@@ -1,0 +1,7 @@
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+test_*.jpg
+anh_nghiem_thu.jpg
