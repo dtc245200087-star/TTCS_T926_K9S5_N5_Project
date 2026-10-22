@@ -19,3 +19,7 @@
 .daily-summary{margin-bottom:14px}.summary-form{display:grid;grid-template-columns:1fr 1.5fr 1.5fr 1fr;gap:13px;align-items:end}.summary-form label{display:grid;gap:7px;color:#435249;font-size:12px;font-weight:600}.summary-form textarea{width:100%;resize:vertical;border:1px solid #dce5df;border-radius:9px;padding:11px 12px;color:#20332a;font:inherit}.summary-form textarea:focus{outline:none;border-color:#0e9364;box-shadow:0 0 0 3px #0e93641a}.summary-readonly{font-size:12px;line-height:1.6;color:#53635a}.summary-readonly p{margin:8px 0}.summary-form button{justify-self:start}.summary-form label:nth-child(2){grid-column:span 2}.summary-form label:nth-child(3){grid-column:span 2}.summary-form label:nth-child(5){grid-column:span 2}
 @media(max-width:850px){.summary-form{grid-template-columns:1fr 1fr}.summary-form label:nth-child(n){grid-column:auto}.summary-form button{grid-column:1/-1}}
 @media(max-width:600px){.summary-form{grid-template-columns:1fr}}
+.summary-checkbox{display:flex!important;align-items:center;gap:12px;min-height:52px;padding:8px 12px;border:1px solid #dce5df;border-radius:9px;color:#20332a!important;background:#f8fbf9}
+.summary-checkbox input[type=checkbox]{flex:0 0 24px;width:24px;height:24px;margin:0;accent-color:#08794f}
+.summary-checkbox span,.summary-checkbox strong,.summary-checkbox small{display:block}
+.summary-checkbox strong{font-size:15px}.summary-checkbox small{margin-top:3px;color:#53635a;font-size:12px;font-weight:400}

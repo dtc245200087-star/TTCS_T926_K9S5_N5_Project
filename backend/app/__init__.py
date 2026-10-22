@@ -7,6 +7,7 @@ from flask_cors import CORS
 
 from .extensions import db  # Bổ sung import db từ extensions
 from .models import cong_viec as tasks
+from .models import milestone as milestones
 from .models import user as users
 from .routes.api import api
 from .routes.auth import auth
@@ -41,6 +42,7 @@ def create_app(test_config=None):
 
     users.initialize_database(str(user_database))
     tasks.initialize_database(str(user_database))
+    milestones.initialize_database(str(user_database))
 
     if users.count_users(str(user_database)) == 0:
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")

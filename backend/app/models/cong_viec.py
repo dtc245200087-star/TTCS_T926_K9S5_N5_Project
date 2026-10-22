@@ -51,6 +51,120 @@ class TaskHistory(db.Model):
     changed_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+RELATIONSHIP_TYPES = frozenset({"FS", "SS", "FF", "SF"})
+
+
+def calculate_schedule(task_by_id, dependencies):
+    predecessors = {task_id: [] for task_id in task_by_id}
+    successors = {task_id: [] for task_id in task_by_id}
+    for dependency in dependencies:
+        task_id = dependency["task_id"]
+        predecessor_id = dependency["depends_on_task_id"]
+        if task_id in task_by_id and predecessor_id in task_by_id:
+            predecessors[task_id].append(dependency)
+            successors[predecessor_id].append(dependency)
+
+    indegree = {
+        task_id: len(task_predecessors)
+        for task_id, task_predecessors in predecessors.items()
+    }
+    queue = deque(
+        task_id for task_id, degree in indegree.items() if degree == 0
+    )
+    order = []
+    while queue:
+        task_id = queue.popleft()
+        order.append(task_id)
+        for dependency in successors[task_id]:
+            successor_id = dependency["task_id"]
+            indegree[successor_id] -= 1
+            if indegree[successor_id] == 0:
+                queue.append(successor_id)
+
+    if len(order) != len(task_by_id):
+        return None
+
+    durations = {
+        task_id: max(0, task["ef"] - task["es"])
+        for task_id, task in task_by_id.items()
+    }
+
+    def relationship_offset(dependency):
+        predecessor_id = dependency["depends_on_task_id"]
+        task_id = dependency["task_id"]
+        predecessor_duration = durations[predecessor_id]
+        task_duration = durations[task_id]
+        relationship_type = dependency["relationship_type"]
+        return {
+            "FS": predecessor_duration,
+            "SS": 0,
+            "FF": predecessor_duration - task_duration,
+            "SF": -task_duration,
+        }[relationship_type]
+
+    early_start = {}
+    early_finish = {}
+    critical_predecessor = {}
+    for task_id in order:
+        task = task_by_id[task_id]
+        constraints = [
+            (
+                early_start[dependency["depends_on_task_id"]]
+                + relationship_offset(dependency),
+                dependency["depends_on_task_id"],
+            )
+            for dependency in predecessors[task_id]
+        ]
+        if constraints:
+            constraint_start, predecessor_id = max(constraints)
+            if constraint_start >= task["es"]:
+                critical_predecessor[task_id] = predecessor_id
+        early_start[task_id] = max(
+            task["es"],
+            max((constraint for constraint, _ in constraints), default=task["es"]),
+        )
+        early_finish[task_id] = early_start[task_id] + durations[task_id]
+
+    project_finish = max(early_finish.values(), default=0)
+    late_start = {}
+    late_finish = {}
+    for task_id in reversed(order):
+        task = task_by_id[task_id]
+        latest_constraints = [
+            late_start[dependency["task_id"]] - relationship_offset(dependency)
+            for dependency in successors[task_id]
+        ]
+        late_start[task_id] = min(
+            latest_constraints,
+            default=project_finish - durations[task_id],
+        )
+        late_finish[task_id] = late_start[task_id] + durations[task_id]
+
+    results = {
+        task_id: {
+            "es": early_start[task_id],
+            "ef": early_finish[task_id],
+            "ls": late_start[task_id],
+            "lf": late_finish[task_id],
+            "total_float": late_start[task_id] - early_start[task_id],
+            "is_critical": int(late_start[task_id] == early_start[task_id]),
+        }
+        for task_id in order
+    }
+    terminal_task = max(
+        (task_id for task_id in order if not successors[task_id]),
+        key=lambda task_id: (early_finish[task_id], -task_id),
+        default=None,
+    )
+    return {
+        "order": order,
+        "results": results,
+        "critical_predecessor": critical_predecessor,
+        "terminal_task": terminal_task,
+        "project_finish": project_finish,
+    }
+
+
 def get_schedule_results(database_path):
     with closing(sqlite3.connect(database_path, timeout=10)) as db:
         db.row_factory = sqlite3.Row
@@ -66,35 +180,13 @@ def get_schedule_results(database_path):
                    ORDER BY id"""
             ).fetchall()
             task_by_id = {task["id"]: task for task in scheduled_tasks}
-            predecessors = {task_id: [] for task_id in task_by_id}
-            successors = {task_id: [] for task_id in task_by_id}
             dependencies = db.execute(
-                "SELECT task_id, depends_on_id FROM task_dependencies"
+                """SELECT task_id, depends_on_task_id, relationship_type
+                   FROM task_dependencies"""
             ).fetchall()
-            for dependency in dependencies:
-                task_id = dependency["task_id"]
-                dependency_id = dependency["depends_on_id"]
-                if task_id in task_by_id and dependency_id in task_by_id:
-                    predecessors[task_id].append(dependency_id)
-                    successors[dependency_id].append(task_id)
+            schedule = calculate_schedule(task_by_id, dependencies)
 
-            indegree = {
-                task_id: len(task_predecessors)
-                for task_id, task_predecessors in predecessors.items()
-            }
-            queue = deque(
-                task_id for task_id, degree in indegree.items() if degree == 0
-            )
-            order = []
-            while queue:
-                task_id = queue.popleft()
-                order.append(task_id)
-                for successor_id in successors[task_id]:
-                    indegree[successor_id] -= 1
-                    if indegree[successor_id] == 0:
-                        queue.append(successor_id)
-
-            if len(order) != len(task_by_id):
+            if schedule is None:
                 results = db.execute(
                     """SELECT sr.task_id, cv.ten, cv.cong_trinh, cv.nguoi_phu_trach,
                               cv.trang_thai, sr.es, sr.ef, sr.ls, sr.lf,
@@ -106,30 +198,6 @@ def get_schedule_results(database_path):
                 db.commit()
                 return [dict(row) for row in results], True
 
-            early_start = {}
-            early_finish = {}
-            for task_id in order:
-                task = task_by_id[task_id]
-                dependency_finish = max(
-                    (early_finish[item] for item in predecessors[task_id]),
-                    default=task["es"],
-                )
-                early_start[task_id] = max(task["es"], dependency_finish)
-                duration = max(0, task["ef"] - task["es"])
-                early_finish[task_id] = early_start[task_id] + duration
-
-            project_finish = max(early_finish.values(), default=0)
-            late_start = {}
-            late_finish = {}
-            for task_id in reversed(order):
-                task = task_by_id[task_id]
-                late_finish[task_id] = min(
-                    (late_start[item] for item in successors[task_id]),
-                    default=project_finish,
-                )
-                duration = max(0, task["ef"] - task["es"])
-                late_start[task_id] = late_finish[task_id] - duration
-
             db.execute("DELETE FROM schedule_results")
             db.executemany(
                 """INSERT INTO schedule_results
@@ -138,14 +206,14 @@ def get_schedule_results(database_path):
                 (
                     (
                         task_id,
-                        early_start[task_id],
-                        early_finish[task_id],
-                        late_start[task_id],
-                        late_finish[task_id],
-                        late_start[task_id] - early_start[task_id],
-                        int(late_start[task_id] == early_start[task_id]),
+                        values["es"],
+                        values["ef"],
+                        values["ls"],
+                        values["lf"],
+                        values["total_float"],
+                        values["is_critical"],
                     )
-                    for task_id in order
+                    for task_id, values in schedule["results"].items()
                 ),
             )
             db.execute(
@@ -222,13 +290,33 @@ def initialize_database(database_path):
                 OR ngay_ket_thuc_thuc_te >= ngay_bat_dau_thuc_te
             )
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS task_dependencies (
+            task_id INTEGER NOT NULL,
+            depends_on_task_id INTEGER NOT NULL,
+            relationship_type TEXT NOT NULL DEFAULT 'FS'
+                CHECK (relationship_type IN ('FS', 'SS', 'FF', 'SF')),
+            PRIMARY KEY (task_id, depends_on_task_id),
+            CHECK (task_id != depends_on_task_id)
+        )""")
+        dependency_columns = {
+            row[1] for row in db.execute(
+                "PRAGMA table_info(task_dependencies)"
+            ).fetchall()
+        }
+        if "depends_on_id" in dependency_columns and "depends_on_task_id" not in dependency_columns:
+            db.execute(
+                "ALTER TABLE task_dependencies "
+                "RENAME COLUMN depends_on_id TO depends_on_task_id"
+            )
+            dependency_columns.remove("depends_on_id")
+            dependency_columns.add("depends_on_task_id")
+        if "relationship_type" not in dependency_columns:
+            db.execute(
+                """ALTER TABLE task_dependencies
+                   ADD COLUMN relationship_type TEXT NOT NULL DEFAULT 'FS'
+                       CHECK (relationship_type IN ('FS', 'SS', 'FF', 'SF'))"""
+            )
         db.executescript("""
-            CREATE TABLE IF NOT EXISTS task_dependencies (
-                task_id INTEGER NOT NULL,
-                depends_on_id INTEGER NOT NULL,
-                PRIMARY KEY (task_id, depends_on_id),
-                CHECK (task_id != depends_on_id)
-            );
             CREATE TABLE IF NOT EXISTS schedule_results (
                 task_id INTEGER PRIMARY KEY,
                 es INTEGER NOT NULL,
@@ -274,7 +362,7 @@ def initialize_database(database_path):
             AFTER DELETE ON cong_viec
             BEGIN
                 DELETE FROM task_dependencies
-                WHERE task_id = OLD.id OR depends_on_id = OLD.id;
+                WHERE task_id = OLD.id OR depends_on_task_id = OLD.id;
                 DELETE FROM schedule_results WHERE task_id = OLD.id;
                 UPDATE schedule_state SET needs_recalculation = 1 WHERE id = 1;
             END;
@@ -369,10 +457,11 @@ def initialize_database(database_path):
                 )
             }
             db.executemany(
-                """INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id)
-                   VALUES (?, ?)""",
+                """INSERT OR IGNORE INTO task_dependencies
+                   (task_id, depends_on_task_id, relationship_type)
+                   VALUES (?, ?, ?)""",
                 (
-                    (task_ids[task_name], task_ids[dependency_name])
+                    (task_ids[task_name], task_ids[dependency_name], "FS")
                     for task_name, dependency_name in SCHEDULE_DEPENDENCIES
                     if task_name in task_ids and dependency_name in task_ids
                 ),
@@ -389,7 +478,8 @@ def list_tasks(database_path):
         rows = db.execute(
             """SELECT id, ten, cong_trinh, nguoi_phu_trach, trang_thai, han,
                       ngay_bat_dau_thuc_te, ngay_ket_thuc_thuc_te,
-                      phan_tram_hoan_thanh, es, ef, ls, lf, total_float, is_critical
+                      phan_tram_hoan_thanh, es, ef, ls, lf, total_float, is_critical,
+                      category_id
                FROM cong_viec ORDER BY id"""
         ).fetchall()
         return [dict(row) for row in rows]

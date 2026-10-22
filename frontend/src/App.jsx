@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
-  Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle,
+  Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle, History,
   Menu, X, TrendingUp, UploadCloud, RotateCw
 } from "lucide-react";
 import { apiFetch, setCsrfToken } from "./api.js";
@@ -23,6 +23,8 @@ import S06DependencyPage from "./components/S06DependencyPage.jsx";
 import { useDiaryImageUploadQueue } from "./hooks/useDiaryImageUploadQueue.js";
 import DiaryImageUploadStatus from "./components/DiaryImageUploadStatus.jsx";
 import DiaryConflictModal from "./components/DiaryConflictModal.jsx";
+import AcceptanceApproval from "./components/AcceptanceApproval.jsx";
+import AuditLogPage from "./components/AuditLogPage.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -40,6 +42,7 @@ const menu = [
   ["Công trình", Building2],
   ["Hạng mục", ClipboardList],
   ["Mốc bàn giao", CalendarDays],
+  ["Phiếu nghiệm thu", ClipboardList],
   ["Công việc", ClipboardList],
   ["Quan hệ phụ thuộc (S-06)", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
@@ -47,6 +50,7 @@ const menu = [
   ["Vật tư", Package],
   ["Thiết bị", Truck],
   ["Nhật ký thi công", BookOpen],
+  ["Nhật ký thao tác", History],
   ["Báo cáo", BarChart3],
   ["Cài đặt", Settings],
 ];
@@ -323,11 +327,13 @@ function App({ user, offlineMode, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
+         page === "Phiếu nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError} baseline={baseline} baselineLoading={baselineLoading} baselineError={baselineError} baselineSaving={baselineSaving} baselineSuccess={baselineSuccess} canManageBaseline={canManageBaseline} onCaptureBaseline={captureScheduleBaseline}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
+
 
 page === "Nhật ký thi công" ? (
   <Diary
@@ -339,6 +345,9 @@ page === "Nhật ký thi công" ? (
     imageUploadQueue={imageUploadQueue}
   />
 ) :
+
+         page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} imageUploadQueue={imageUploadQueue}/> :
+         page === "Nhật ký thao tác" ? <AuditLogPage/> :
 
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
@@ -619,7 +628,7 @@ function Diary({
   const [diaryDate, setDiaryDate] = useState(today);
   const [taskFilter, setTaskFilter] = useState("");
   const [entries, setEntries] = useState([]);
-  const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+  const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", mua_ca_ngay: false});
   const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
   const [selectedImages, setSelectedImages] = useState([]);
   const [pendingImageCompressions, setPendingImageCompressions] = useState(0);
@@ -938,7 +947,7 @@ function Diary({
       .then(async response => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "Không tải được thông tin trong ngày.");
-        setSummary(payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+        setSummary(payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", mua_ca_ngay: false});
       })
       .catch(e => setError(e.message));
   }, [project, diaryDate]);
@@ -1112,10 +1121,11 @@ function Diary({
           <label>Số nhân lực<input type="number" min="0" max="10000" value={summary.nhan_luc_so_nguoi ?? ""} onChange={e => setSummary({...summary, nhan_luc_so_nguoi: e.target.value})} placeholder="Nhập số người"/></label>
           <label>Ghi chú nhân lực<input maxLength={2000} value={summary.nhan_luc_ghi_chu || ""} onChange={e => setSummary({...summary, nhan_luc_ghi_chu: e.target.value})} placeholder="Ví dụ: 2 tổ thi công, 1 cán bộ giám sát"/></label>
           <label>Thiết bị sử dụng<textarea rows={2} maxLength={4000} value={summary.thiet_bi || ""} onChange={e => setSummary({...summary, thiet_bi: e.target.value})} placeholder="Tên thiết bị và tình trạng sử dụng"/></label>
-          <label>Thời tiết<select value={summary.thoi_tiet || ""} onChange={e => setSummary({...summary, thoi_tiet: e.target.value})}><option value="">Chưa ghi nhận</option><option>Nắng</option><option>Nhiều mây</option><option>Mưa</option><option>Khác</option></select></label>
+          <label>Thời tiết<select value={summary.thoi_tiet || ""} onChange={e => setSummary(current => ({...current, thoi_tiet: e.target.value, mua_ca_ngay: e.target.value === "Mưa" && current.mua_ca_ngay}))}><option value="">Chưa ghi nhận</option><option>Nắng</option><option>Nhiều mây</option><option>Mưa</option><option>Khác</option></select></label>
+          <label className="summary-checkbox"><input type="checkbox" checked={Boolean(summary.mua_ca_ngay)} onChange={e => setSummary(current => ({...current, mua_ca_ngay: e.target.checked, thoi_tiet: e.target.checked ? "Mưa" : current.thoi_tiet}))}/><span><strong>Mưa cả ngày</strong><small>Đánh dấu để đối chiếu với tình trạng chậm tiến độ.</small></span></label>
           <label>Ghi chú thời tiết<input maxLength={2000} value={summary.ghi_chu_thoi_tiet || ""} onChange={e => setSummary({...summary, ghi_chu_thoi_tiet: e.target.value})} placeholder="Mô tả ảnh hưởng đến thi công"/></label>
           <button className="primary">Lưu tình hình ngày</button>
-        </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
+        </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.mua_ca_ngay ? " — Mưa cả ngày" : ""}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
       </section>
       {canWrite && <form className="panel diary-form" onSubmit={saveEntry}>
         <div className="panel-head"><div><h2>Thêm mục nhật ký</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div></div>
