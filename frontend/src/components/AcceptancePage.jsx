@@ -5,6 +5,7 @@ export default function AcceptancePage({user}) {
   const [tasks,setTasks]=useState([]), [batches,setBatches]=useState([]), [project,setProject]=useState('');
   const [date,setDate]=useState(new Date().toISOString().slice(0,10));
   const [values,setValues]=useState({}), [error,setError]=useState(''), [busy,setBusy]=useState(false);
+  const [contractInputs,setContractInputs]=useState({});
   async function load() {
     const [a,b]=await Promise.all([apiFetch('/api/acceptance/tasks'),apiFetch('/api/acceptance')]);
     if(!a.ok || !b.ok) throw new Error('Không tải được dữ liệu nghiệm thu');
@@ -28,6 +29,16 @@ export default function AcceptancePage({user}) {
       setValues({});await load();
     }catch(e){setError(e.message)}finally{setBusy(false)}
   }
+  async function saveContract(taskId){
+    setError('');
+    const response = await apiFetch(`/api/acceptance/contracts/${taskId}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({contract_quantity:contractInputs[taskId]}),
+    });
+    const data = await response.json();
+    if (!response.ok){setError(data.message || 'Không lưu được khối lượng hợp đồng.');return;}
+    await load();
+  }
   async function approve(id){
     if(!window.confirm('Duyệt phiếu nghiệm thu này?'))return;
     const r=await apiFetch(`/api/acceptance/${id}/approve`,{method:'POST'});
@@ -44,8 +55,13 @@ export default function AcceptancePage({user}) {
     <form onSubmit={create}>
       <label>Công trình <select required value={project} onChange={e=>{setProject(e.target.value);setValues({})}}><option value="">Chọn công trình</option>{projects.map(p=><option key={p}>{p}</option>)}</select></label>
       <label>Ngày nghiệm thu <input type="date" required value={date} onChange={e=>setDate(e.target.value)}/></label>
-      <table><thead><tr><th>Hạng mục</th><th>Lũy kế đã duyệt</th><th>Số đo S-26</th><th>Lũy kế mới</th><th>Khối lượng đợt</th></tr></thead>
-      <tbody>{selected.map(t=><tr key={t.id}><td>{t.ten}</td><td>{previous[t.id]}</td><td>{t.s26_measured??'Chưa có số liệu'}</td>
+      <table><thead><tr><th>Hạng mục</th><th>Hợp đồng</th><th>Lũy kế đã duyệt</th><th>Số đo S-26</th><th>Lũy kế mới</th><th>Khối lượng đợt</th></tr></thead>
+      <tbody>{selected.map(t=><tr key={t.id}><td>{t.ten}</td><td>{t.contract_quantity??'Chưa thiết lập'}
+      {['admin','manager'].includes(user.role)&&<div>
+        <input type="number" min="0.000001" step="any" aria-label={`Giới hạn hợp đồng ${t.ten}`}
+          value={contractInputs[t.id]??''} onChange={e=>setContractInputs(v=>({...v,[t.id]:e.target.value}))}/>
+        <button type="button" onClick={()=>saveContract(t.id)}>Lưu hạn mức</button>
+      </div>}</td><td>{previous[t.id]}</td><td>{t.s26_measured??'Chưa có số liệu'}</td>
       <td><input type="number" min={previous[t.id]} step="any" value={values[t.id]??''} onChange={e=>setValues(v=>({...v,[t.id]:e.target.value}))}/></td>
       <td>{values[t.id]!==undefined && values[t.id]!=='' ? Number(values[t.id])-previous[t.id]: '—'}</td></tr>)}</tbody></table>
       <button type="submit" disabled={busy||!project||!['admin','manager','engineer'].includes(user.role)}>{busy?'Đang lưu...':'Lập phiếu nháp'}</button>
