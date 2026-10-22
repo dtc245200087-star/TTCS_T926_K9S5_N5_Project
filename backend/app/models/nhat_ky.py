@@ -117,10 +117,7 @@ def list_entries(database_path, *, project=None, diary_date=None, work_item_id=N
         db.row_factory = sqlite3.Row
         rows = db.execute(
 
-            """SELECT e.id, e.client_uid, d.cong_trinh, d.ngay, e.cong_viec_id,
-
-            """SELECT e.id, d.cong_trinh, d.ngay, e.cong_viec_id,
-
+           """SELECT e.id, e.client_uid, d.cong_trinh, d.ngay, e.cong_viec_id,
                       t.ten AS hang_muc, e.gio, e.noi_dung,
                       COALESCE(u.full_name, 'Tài khoản đã xóa') AS nguoi_lap
                FROM nhat_ky_muc e
