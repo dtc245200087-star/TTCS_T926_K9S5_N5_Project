@@ -597,7 +597,7 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
   const [diaryDate, setDiaryDate] = useState(today);
   const [taskFilter, setTaskFilter] = useState("");
   const [entries, setEntries] = useState([]);
-  const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+  const [summary, setSummary] = useState({nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", mua_ca_ngay: false});
   const [form, setForm] = useState({cong_viec_id: "", gio: new Date().toTimeString().slice(0, 5), noi_dung: ""});
   const [selectedImages, setSelectedImages] = useState([]);
   const [pendingImageCompressions, setPendingImageCompressions] = useState(0);
@@ -740,7 +740,7 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
       .then(async response => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "Không tải được thông tin trong ngày.");
-        setSummary(payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: ""});
+        setSummary(payload || {nhan_luc_so_nguoi: "", nhan_luc_ghi_chu: "", thiet_bi: "", thoi_tiet: "", ghi_chu_thoi_tiet: "", mua_ca_ngay: false});
       })
       .catch(e => setError(e.message));
   }, [project, diaryDate]);
@@ -923,10 +923,11 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
           <label>Số nhân lực<input type="number" min="0" max="10000" value={summary.nhan_luc_so_nguoi ?? ""} onChange={e => setSummary({...summary, nhan_luc_so_nguoi: e.target.value})} placeholder="Nhập số người"/></label>
           <label>Ghi chú nhân lực<input maxLength={2000} value={summary.nhan_luc_ghi_chu || ""} onChange={e => setSummary({...summary, nhan_luc_ghi_chu: e.target.value})} placeholder="Ví dụ: 2 tổ thi công, 1 cán bộ giám sát"/></label>
           <label>Thiết bị sử dụng<textarea rows={2} maxLength={4000} value={summary.thiet_bi || ""} onChange={e => setSummary({...summary, thiet_bi: e.target.value})} placeholder="Tên thiết bị và tình trạng sử dụng"/></label>
-          <label>Thời tiết<select value={summary.thoi_tiet || ""} onChange={e => setSummary({...summary, thoi_tiet: e.target.value})}><option value="">Chưa ghi nhận</option><option>Nắng</option><option>Nhiều mây</option><option>Mưa</option><option>Khác</option></select></label>
+          <label>Thời tiết<select value={summary.thoi_tiet || ""} onChange={e => setSummary(current => ({...current, thoi_tiet: e.target.value, mua_ca_ngay: e.target.value === "Mưa" && current.mua_ca_ngay}))}><option value="">Chưa ghi nhận</option><option>Nắng</option><option>Nhiều mây</option><option>Mưa</option><option>Khác</option></select></label>
+          <label className="summary-checkbox"><input type="checkbox" checked={Boolean(summary.mua_ca_ngay)} onChange={e => setSummary(current => ({...current, mua_ca_ngay: e.target.checked, thoi_tiet: e.target.checked ? "Mưa" : current.thoi_tiet}))}/><span><strong>Mưa cả ngày</strong><small>Đánh dấu để đối chiếu với tình trạng chậm tiến độ.</small></span></label>
           <label>Ghi chú thời tiết<input maxLength={2000} value={summary.ghi_chu_thoi_tiet || ""} onChange={e => setSummary({...summary, ghi_chu_thoi_tiet: e.target.value})} placeholder="Mô tả ảnh hưởng đến thi công"/></label>
           <button className="primary">Lưu tình hình ngày</button>
-        </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
+        </form> : <div className="summary-readonly"><p><strong>Nhân lực:</strong> {summary.nhan_luc_so_nguoi ?? "Chưa ghi nhận"}{summary.nhan_luc_ghi_chu ? ` — ${summary.nhan_luc_ghi_chu}` : ""}</p><p><strong>Thiết bị:</strong> {summary.thiet_bi || "Chưa ghi nhận"}</p><p><strong>Thời tiết:</strong> {summary.thoi_tiet || "Chưa ghi nhận"}{summary.mua_ca_ngay ? " — Mưa cả ngày" : ""}{summary.ghi_chu_thoi_tiet ? ` — ${summary.ghi_chu_thoi_tiet}` : ""}</p></div>}
       </section>
       {canWrite && <form className="panel diary-form" onSubmit={saveEntry}>
         <div className="panel-head"><div><h2>Thêm mục nhật ký</h2><p>Mỗi mục cần gắn với một hạng mục công việc.</p></div></div>
