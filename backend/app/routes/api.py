@@ -213,44 +213,7 @@ def add_nhat_ky():
     entry = diaries.create_entry(
         database_path,
 
-    data = request.get_json(silent=True) if request.is_json else request.form.to_dict()
-    if not isinstance(data, dict):
-        return jsonify({"error": "invalid_payload", "message": "Dữ liệu gửi lên không hợp lệ."}), 400
-
-    project = data.get("cong_trinh")
-    diary_date = data.get("ngay")
-    work_item_id = data.get("cong_viec_id")
-    entry_time = data.get("gio")
-    description = data.get("noi_dung")
-    if not isinstance(project, str) or project not in {item["ten"] for item in cong_trinh}:
-        return jsonify({"error": "invalid_project", "message": "Hãy chọn công trình hợp lệ."}), 400
-    if not isinstance(diary_date, str):
-        return jsonify({"error": "invalid_date", "message": "Ngày nhật ký là bắt buộc."}), 400
-    try:
-        if date.fromisoformat(diary_date).isoformat() != diary_date:
-            raise ValueError
-    except ValueError:
-        return jsonify({"error": "invalid_date", "message": "Ngày phải theo định dạng YYYY-MM-DD."}), 400
-    if isinstance(work_item_id, bool) or not str(work_item_id).isdigit():
-        return jsonify({"error": "invalid_work_item", "message": "Mỗi mục nhật ký phải gắn với một hạng mục."}), 400
-    work_item_id = int(work_item_id)
-    task = next((item for item in tasks.list_tasks(current_app.config["USER_DATABASE"]) if item["id"] == work_item_id), None)
-    if not task or task.get("cong_trinh") != project:
-        return jsonify({"error": "invalid_work_item", "message": "Hạng mục không thuộc công trình đã chọn."}), 400
-    if not isinstance(entry_time, str):
-        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận là bắt buộc."}), 400
-    try:
-        if datetime.strptime(entry_time, "%H:%M").strftime("%H:%M") != entry_time:
-            raise ValueError
-    except ValueError:
-        return jsonify({"error": "invalid_time", "message": "Giờ ghi nhận phải theo định dạng HH:MM."}), 400
-    if not isinstance(description, str) or not description.strip() or len(description.strip()) > 5000:
-        return jsonify({"error": "invalid_description", "message": "Nội dung công việc là bắt buộc và tối đa 5000 ký tự."}), 400
-
-    entry = diaries.create_entry(
-        current_app.config["USER_DATABASE"],
-
-        project=project,
+           project=project,
         diary_date=diary_date,
         task_id=work_item_id,
         entry_time=entry_time,
