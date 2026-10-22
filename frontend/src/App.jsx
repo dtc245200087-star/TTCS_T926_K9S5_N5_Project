@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard, Building2, ClipboardList, Users, Package,
   Truck, BookOpen, BarChart3, Settings, Bell, Search,
-  Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle,
+  Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle, History,
   Menu, X, TrendingUp, UploadCloud, RotateCw
 } from "lucide-react";
 import { apiFetch } from "./api.js";
@@ -19,6 +19,7 @@ import { useDiaryImageUploadQueue } from "./hooks/useDiaryImageUploadQueue.js";
 import DiaryImageUploadStatus from "./components/DiaryImageUploadStatus.jsx";
 import DiaryConflictModal from "./components/DiaryConflictModal.jsx";
 import AcceptanceApproval from "./components/AcceptanceApproval.jsx";
+import AuditLogPage from "./components/AuditLogPage.jsx";
 
 const API = "/api";
 const ROLE_NAMES = { admin: "Quản trị viên", manager: "Quản lý công trình", engineer: "Kỹ sư", viewer: "Chỉ xem" };
@@ -44,6 +45,7 @@ const menu = [
   ["Vật tư", Package],
   ["Thiết bị", Truck],
   ["Nhật ký thi công", BookOpen],
+  ["Nhật ký thao tác", History],
   ["Báo cáo", BarChart3],
   ["Cài đặt", Settings],
 ];
@@ -327,6 +329,7 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} imageUploadQueue={imageUploadQueue}/> :
+         page === "Nhật ký thao tác" ? <AuditLogPage/> :
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
