@@ -1,6 +1,7 @@
 {
   "name": "Điều hành thi công công trình",
   "short_name": "Điều hành thi công",
+  "lang": "vi",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

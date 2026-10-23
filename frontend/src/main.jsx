@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import ReloadPrompt from './ReloadPrompt.jsx';
 import { apiFetch, setCsrfToken, setUnauthorizedHandler } from './api.js';
+import { clearOfflineProfile, getOfflineProfile, saveOfflineProfile } from './offlineDiary.js';
 import './style.css';
 import './task-progress.css';
 import './pwa.css';
@@ -13,14 +14,22 @@ function LoginGate() {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [offlineMode, setOfflineMode] = useState(false);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => { setUser(null); setCsrfToken(''); });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    setUnauthorizedHandler(() => {
+      setUser(null); setCsrfToken(''); clearOfflineProfile().catch(() => {});
+    });
     apiFetch('/api/auth/me').then(async response => {
       if (!response.ok) return;
       const data = await response.json();
-      setUser(data.user); setCsrfToken(data.csrf_token);
-    }).catch(() => {}).finally(() => setLoading(false));
+      setUser(data.user); setCsrfToken(data.csrf_token); setOfflineMode(false);
+      await saveOfflineProfile(data.user).catch(() => {});
+    }).catch(async () => {
+      const cachedUser = await getOfflineProfile().catch(() => null);
+      if (cachedUser) { setUser(cachedUser); setOfflineMode(true); }
+    }).finally(() => setLoading(false));
   }, []);
 
   async function submit(event) {
@@ -35,22 +44,28 @@ function LoginGate() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'Không thể đăng nhập.');
-      setCsrfToken(data.csrf_token); setUser(data.user); setCredentials({ username: '', password: '' });
+      setCsrfToken(data.csrf_token); setUser(data.user); setOfflineMode(false);
+      await saveOfflineProfile(data.user).catch(() => {});
+      setCredentials({ username: '', password: '' });
     } catch (err) { setError(err.message || 'Không thể kết nối máy chủ.'); }
     finally { setBusy(false); }
   }
 
   async function logout() {
     try { await apiFetch('/api/auth/logout', { method: 'POST' }); }
-    finally { setUser(null); setCsrfToken(''); }
+    finally {
+      setUser(null); setCsrfToken(''); setOfflineMode(false);
+      await clearOfflineProfile().catch(() => {});
+    }
   }
 
   function passwordChanged() {
     setUser(null); setCsrfToken('');
+    clearOfflineProfile().catch(() => {});
   }
 
   if (loading) return <main className="login-shell"><p className="muted">Đang kiểm tra phiên đăng nhập…</p></main>;
-  if (user) return <App user={user} onLogout={logout} onPasswordChanged={passwordChanged} />;
+  if (user) return <App user={user} offlineMode={offlineMode} onLogout={logout} onPasswordChanged={passwordChanged} />;
   return <main className="login-shell">
     <section className="login-card">
       <div className="brand-mark">DT</div>

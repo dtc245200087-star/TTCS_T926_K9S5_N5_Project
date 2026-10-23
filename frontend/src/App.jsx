@@ -5,13 +5,18 @@ import {
   Plus, MapPin, CalendarDays, CheckCircle2, Clock3, AlertTriangle, History,
   Menu, X, TrendingUp, UploadCloud, RotateCw
 } from "lucide-react";
-import { apiFetch } from "./api.js";
+import { apiFetch, setCsrfToken } from "./api.js";
 import { useSyncQueue } from "./hooks/useSyncQueue.js";
 import SyncStatusWidget from "./components/SyncStatusWidget.jsx";
 import GanttChart from "./components/GanttChart";
 import CategoryTree from "./components/CategoryTree.jsx";
 import MilestoneAlerts from "./components/MilestoneAlerts.jsx";
 import { sortTasksByDependencies } from "./dependencies.js";
+import {
+  cacheValue, deleteOfflineDraft, getStorageEstimate, listOfflineDrafts,
+  OFFLINE_DRAFT_LIMIT, readCachedValue, requestPersistentStorage,
+  saveOfflineDraft, updateOfflineDraft,
+} from "./offlineDiary.js";
 import "./milestone.css";
 import "./task-progress.css";
 import S06DependencyPage from "./components/S06DependencyPage.jsx";
@@ -40,6 +45,7 @@ const menu = [
   ["Hạng mục", ClipboardList],
   ["Mốc bàn giao", CalendarDays],
   ["Phiếu nghiệm thu", ClipboardList],
+  ["Duyệt nghiệm thu", ClipboardList],
   ["Công việc", ClipboardList],
   ["Quan hệ phụ thuộc (S-06)", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
@@ -108,7 +114,7 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function App({ user, onLogout, onPasswordChanged }) {
+function App({ user, offlineMode, onLogout, onPasswordChanged }) {
   const syncQueue = useSyncQueue();
   const mockDiaryImageUrls = useRef(new Set());
   const handleDiaryImageUploaded = useCallback((job, uploadedImage) => {
@@ -325,18 +331,32 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
-         page === "Phiếu nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
+         page === "Phiếu nghiệm thu" ? <AcceptancePage user={user}/> :
+         page === "Duyệt nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError} baseline={baseline} baselineLoading={baselineLoading} baselineError={baselineError} baselineSaving={baselineSaving} baselineSuccess={baselineSuccess} canManageBaseline={canManageBaseline} onCaptureBaseline={captureScheduleBaseline}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
          page === "Nhân sự" ? <SimpleTable title="Danh sách nhân sự" endpoint="/nhan-su" columns={["ho_ten","vai_tro","cong_trinh","trang_thai"]} headers={["Họ tên","Vai trò","Công trình","Trạng thái"]}/> :
          page === "Vật tư" ? <Materials/> :
 
+
+page === "Nhật ký thi công" ? (
+  <Diary
+    user={user}
+    initialOffline={offlineMode}
+    canWrite={["admin", "manager", "engineer"].includes(user.role)}
+    enqueueItems={syncQueue.enqueueItems}
+    markItemSynced={syncQueue.markItemSynced}
+    imageUploadQueue={imageUploadQueue}
+  />
+) :
+
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} imageUploadQueue={imageUploadQueue}/> :
          page === "Phiếu nghiệm thu" ? <AcceptancePage user={user}/> :
          page === "Duyệt nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
 
          page === "Nhật ký thao tác" ? <AuditLogPage/> :
+
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
@@ -599,7 +619,16 @@ function Materials() {
   );
 }
 
-function Diary({canWrite, enqueueItems, imageUploadQueue}) {
+
+function Diary({
+  user,
+  initialOffline,
+  canWrite,
+  enqueueItems,
+  markItemSynced,
+  imageUploadQueue
+}) {
+
   const today = new Date().toLocaleDateString("en-CA");
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -619,6 +648,18 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const [isOnline, setIsOnline] = useState(
+    navigator.onLine && !initialOffline
+  );
+  const [storageInfo, setStorageInfo] = useState({
+    pending: 0,
+    usage: 0,
+    quota: 0
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const syncLock = useRef(false);
+
   const [sampleConflict, setSampleConflict] = useState(null);
   const [conflictNotice, setConflictNotice] = useState("");
 
@@ -626,6 +667,26 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
     for (const url of previewUrls.current) URL.revokeObjectURL(url);
   }, []);
 
+  async function refreshStorageInfo() {
+    const [drafts, estimate] = await Promise.all([
+      listOfflineDrafts({owner_id: user.id}).catch(() => []),
+      getStorageEstimate(),
+    ]);
+    setStorageInfo({pending: drafts.length, usage: estimate.usage, quota: estimate.quota});
+  }
+
+  useEffect(() => {
+    requestPersistentStorage();
+    refreshStorageInfo();
+    const online = () => setIsOnline(true);
+    const offline = () => setIsOnline(false);
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+  }, [user.id]);
   useEffect(() => {
     const handleUploadedImage = event => {
       const {entryId, image} = event.detail;
@@ -687,16 +748,40 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
   }
 
   useEffect(() => {
-    Promise.all([apiFetch(`${API}/cong-trinh`).then(r => r.json()), apiFetch(`${API}/cong-viec`).then(r => r.json())])
-      .then(([projectList, taskList]) => {
-        setProjects(projectList);
-        setTasks(taskList);
-        setProject(projectList[0]?.ten || "");
-      })
-      .catch(() => setError("Không tải được danh sách công trình và hạng mục."));
-  }, []);
+    let active = true;
+    async function loadOptions() {
+      const [cachedProjects, cachedTasks] = await Promise.all([
+        readCachedValue(`projects:${user.id}`).catch(() => null),
+        readCachedValue(`tasks:${user.id}`).catch(() => null),
+      ]);
+      if (active && cachedProjects && cachedTasks) {
+        setProjects(cachedProjects);
+        setTasks(cachedTasks);
+        setProject(current => current || cachedProjects[0]?.ten || "");
+      }
+      try {
+        const [projectResponse, taskResponse] = await Promise.all([
+          apiFetch(`${API}/cong-trinh`), apiFetch(`${API}/cong-viec`),
+        ]);
+        if (!projectResponse.ok || !taskResponse.ok) throw new Error("Không tải được danh sách công trình và hạng mục.");
+        const [projectList, taskList] = await Promise.all([projectResponse.json(), taskResponse.json()]);
+        await Promise.all([cacheValue(`projects:${user.id}`, projectList), cacheValue(`tasks:${user.id}`, taskList)]);
+        if (active) {
+          setProjects(projectList);
+          setTasks(taskList);
+          setProject(current => projectList.some(item => item.ten === current) ? current : projectList[0]?.ten || "");
+        }
+      } catch {
+        if (active && !(cachedProjects && cachedTasks)) setError("Chưa có danh sách công trình offline. Hãy mở nhật ký khi có mạng ít nhất một lần.");
+      }
+    }
+    loadOptions();
+    return () => { active = false; };
+  }, [user.id]);
 
   const projectTasks = tasks.filter(task => task.cong_trinh === project);
+  const remainingDrafts = Math.max(0, OFFLINE_DRAFT_LIMIT - storageInfo.pending);
+  const storageNearlyFull = storageInfo.quota > 0 && storageInfo.usage / storageInfo.quota >= 0.8;
   function openSampleConflict() {
     const base = {
       id: "sample-diary-32",
@@ -733,15 +818,135 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
     if (!project || !diaryDate) return;
     const query = new URLSearchParams({cong_trinh: project, ngay: diaryDate});
     if (taskFilter) query.set("cong_viec_id", taskFilter);
-    apiFetch(`${API}/nhat-ky?${query}`)
-      .then(async response => {
+    async function hydrateDrafts() {
+      const drafts = await listOfflineDrafts({
+        owner_id: user.id, project, diary_date: diaryDate, task_id: taskFilter || undefined,
+      });
+      return drafts.map(draft => ({
+        id: draft.local_id,
+        local_id: draft.local_id,
+        client_uid: draft.local_id,
+        cong_trinh: draft.cong_trinh,
+        ngay: draft.ngay,
+        cong_viec_id: draft.cong_viec_id,
+        hang_muc: projectTasks.find(task => task.id === Number(draft.cong_viec_id))?.ten || "Hạng mục đã lưu offline",
+        gio: draft.gio,
+        noi_dung: draft.noi_dung,
+        nguoi_lap: user.full_name,
+        offline_pending: true,
+        sync_error: draft.sync_error,
+        images: (draft.images || []).map(image => {
+          const url = URL.createObjectURL(image.blob);
+          const thumbnailUrl = URL.createObjectURL(image.thumbnail || image.blob);
+          previewUrls.current.add(url);
+          previewUrls.current.add(thumbnailUrl);
+          return {id: image.id, url, thumbnail_url: thumbnailUrl, ghi_chu: image.note || ""};
+        }),
+      }));
+    }
+    async function load() {
+      const localEntries = await hydrateDrafts().catch(() => []);
+      if (!navigator.onLine) { setEntries(localEntries); return; }
+      try {
+        const response = await apiFetch(`${API}/nhat-ky?${query}`);
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "Không tải được nhật ký.");
-        setEntries(payload);
-      })
-      .catch(e => setError(e.message));
+        await cacheValue(`entries:${user.id}:${project}:${diaryDate}:${taskFilter || "all"}`, payload).catch(() => {});
+        setEntries([...localEntries, ...payload]);
+      } catch {
+        const cached = await readCachedValue(`entries:${user.id}:${project}:${diaryDate}:${taskFilter || "all"}`).catch(() => []);
+        setEntries([...localEntries, ...(cached || [])]);
+      }
+      refreshStorageInfo();
+    }
+    load();
   };
   useEffect(() => { loadEntries(); }, [project, diaryDate, taskFilter]);
+
+  // S30_RETRY_QUEUE: retry independent drafts; an error must not block later drafts.
+  async function syncOfflineDrafts() {
+    if (!navigator.onLine || syncLock.current) return;
+    syncLock.current = true;
+    setIsSyncing(true);
+    let changed = false;
+    try {
+      const csrfResponse = await apiFetch(`${API}/auth/csrf`);
+      if (!csrfResponse.ok) throw new Error("Không khôi phục được phiên đồng bộ.");
+      const csrfPayload = await csrfResponse.json();
+      setCsrfToken(csrfPayload.csrf_token);
+      const drafts = await listOfflineDrafts({owner_id: user.id});
+      for (const draft of drafts) {
+        if (!navigator.onLine) break;
+        try {
+          await updateOfflineDraft({...draft, sync_status: "syncing", sync_error: ""});
+          const response = await apiFetch(`${API}/nhat-ky`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              cong_trinh: draft.cong_trinh,
+              ngay: draft.ngay,
+              cong_viec_id: Number(draft.cong_viec_id),
+              gio: draft.gio,
+              noi_dung: draft.noi_dung,
+              client_uid: draft.local_id,
+            }),
+          });
+          const entry = await response.json();
+          if (!response.ok || !entry?.id) {
+            throw new Error(entry?.message || `Không đồng bộ được nhật ký (HTTP ${response.status}).`);
+          }
+          // Reuse upload_id on retries: the server will not create duplicate photos.
+          for (const image of draft.images || []) {
+            const body = new FormData();
+            body.append("image", image.blob, "field-image.jpg");
+            body.append("thumbnail", image.thumbnail || image.blob, "field-thumbnail.jpg");
+            body.append("ghi_chu_anh", image.note || "");
+            body.append("upload_id", image.id);
+            const imageResponse = await apiFetch(`${API}/nhat-ky/${entry.id}/images`, {
+              method: "POST", body,
+            });
+            if (!imageResponse.ok) {
+              const result = await imageResponse.json().catch(() => ({}));
+              throw new Error(result.message || `Không đồng bộ được ảnh (HTTP ${imageResponse.status}).`);
+            }
+          }
+          // Delete only after the entry and ALL its images are acknowledged.
+          await deleteOfflineDraft(draft.local_id);
+          setEntries(current => current.filter(item => item.local_id !== draft.local_id));
+          changed = true;
+        } catch (syncError) {
+          await updateOfflineDraft({
+            ...draft, sync_status: "pending",
+            sync_error: syncError.message || "Chưa đồng bộ được.",
+          }).catch(() => {});
+          if (!navigator.onLine) setIsOnline(false);
+          // Continue: one invalid draft cannot block every other draft.
+        }
+      }
+      if (changed) loadEntries();
+    } catch (syncError) {
+      setError(syncError.message || "Không kết nối được máy chủ đồng bộ.");
+      if (!navigator.onLine) setIsOnline(false);
+    } finally {
+      syncLock.current = false;
+      setIsSyncing(false);
+      refreshStorageInfo();
+    }
+  }
+
+  useEffect(() => {
+    if (!isOnline) return undefined;
+    syncOfflineDrafts();
+    const retry = () => syncOfflineDrafts();
+    window.addEventListener("online", retry);
+    window.addEventListener("diary-sync-request", retry);
+    const interval = window.setInterval(retry, 30_000);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.removeEventListener("diary-sync-request", retry);
+      window.clearInterval(interval);
+    };
+  }, [isOnline, user.id]);
 
   useEffect(() => {
     if (!project || !diaryDate) return;
@@ -760,83 +965,63 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
     setError("");
     setNotice("");
     setSaving(true);
-    const selectedAtSave = selectedImages;
-    const imageNoteAtSave = imageNote.trim();
-    const diaryPayload = {
-      ...form,
-      cong_trinh: project,
-      ngay: diaryDate,
-      cong_viec_id: Number(form.cong_viec_id),
-    };
     try {
-      const response = await apiFetch(`${API}/nhat-ky`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(diaryPayload),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || "Không thể lưu nhật ký.");
+      if (!project || !form.cong_viec_id || !form.noi_dung.trim()) {
+        throw new Error("Hãy chọn công trình, hạng mục và nhập nội dung nhật ký.");
+      }
+      if (pendingImageCompressions > 0 || selectedImages.some(image => !image.compressedBlob || image.status === "error")) {
+        throw new Error("Chờ nén xong ảnh và xử lý ảnh lỗi trước khi lưu nhật ký.");
+      }
+      await requestPersistentStorage();
+      const localId = crypto.randomUUID();
+      const localDraft = {
+        local_id: localId,
+        owner_id: user.id,
+        cong_trinh: project,
+        ngay: diaryDate,
+        cong_viec_id: Number(form.cong_viec_id),
+        gio: form.gio,
+        noi_dung: form.noi_dung.trim(),
+        created_at: Date.now(),
+        sync_status: "pending",
+        sync_error: "",
+        images: selectedImages.map(image => ({
+          id: image.id,
+          blob: image.compressedBlob,
+          thumbnail: image.thumbnailBlob,
+          note: imageNote.trim(),
+        })),
+      };
+      await saveOfflineDraft(localDraft);
+      const localEntry = {
+        id: localId,
+        local_id: localId,
+        cong_trinh: project,
+        ngay: diaryDate,
+        cong_viec_id: Number(form.cong_viec_id),
+        hang_muc: projectTasks.find(task => task.id === Number(form.cong_viec_id))?.ten || "Hạng mục",
+        gio: form.gio,
+        noi_dung: form.noi_dung.trim(),
+        nguoi_lap: user.full_name,
+        offline_pending: true,
+        images: selectedImages.map(image => ({
+          id: image.id,
+          url: image.preview,
+          thumbnail_url: image.preview,
+          ghi_chu: imageNote.trim(),
+        })),
+      };
+      setEntries(current => [localEntry, ...current]);
       setForm(current => ({...current, noi_dung: ""}));
-      setEntries(current => [payload, ...current.filter(entry => entry.id !== payload.id)]);
-      const imagesToUpload = selectedAtSave.filter(image => image.compressedBlob && image.thumbnailBlob);
-      if (!imagesToUpload.length) {
-        setNotice("Đã thêm mục nhật ký.");
-        return;
-      }
-      try {
-        await imageUploadQueue.enqueueImages(imagesToUpload.map(image => ({
-          ...image,
-          entryId: payload.id,
-          note: imageNoteAtSave,
-        })));
-        const queuedIds = new Set(imagesToUpload.map(image => image.id));
-        imagesToUpload.forEach(image => releasePreview(image.preview));
-        setSelectedImages(current => current.filter(image => !queuedIds.has(image.id)));
-        setImageNote("");
-        setNotice(`Đã lưu nhật ký. ${imagesToUpload.length} ảnh được đưa vào hàng đợi tải nền.`);
-      } catch (queueError) {
-        setError(`Đã lưu nhật ký, nhưng không thể lưu ảnh vào hàng đợi: ${queueError.message}`);
-      }
+      setSelectedImages([]);
+      setImageNote("");
+      await refreshStorageInfo();
+      setNotice(isOnline && navigator.onLine
+        ? "Đã lưu an toàn trên thiết bị. Nhật ký đang được đồng bộ lên máy chủ."
+        : "Đã lưu trên thiết bị. Nhật ký sẽ tự đồng bộ khi có mạng.");
+      if (isOnline && navigator.onLine) syncOfflineDrafts();
     } catch (e) {
-      const networkFailure = !navigator.onLine || e instanceof TypeError || e.name === "AbortError";
-      if (networkFailure) {
-        const diaryQueueId = `sync-diary-${crypto.randomUUID()}`;
-        const queuedItems = [{
-          id: diaryQueueId,
-          type: "diary",
-          title: `Nhật ký ${project} - ${diaryDate}`,
-          payload: diaryPayload,
-        }];
-        try {
-          await enqueueItems(queuedItems);
-          setForm(current => ({...current, noi_dung: ""}));
-          setImageNote("");
-          const imagesToWait = selectedAtSave.filter(image => image.compressedBlob && image.thumbnailBlob);
-          const imageIdsToClear = new Set();
-          let imageQueueNotice = "";
-          if (imagesToWait.length) {
-            try {
-              await imageUploadQueue.enqueueImages(imagesToWait.map(image => ({
-                ...image,
-                entryId: null,
-                diaryQueueId,
-                note: imageNoteAtSave,
-              })));
-              imagesToWait.forEach(image => releasePreview(image.preview));
-              imagesToWait.forEach(image => imageIdsToClear.add(image.id));
-              imageQueueNotice = " Ảnh được giữ riêng trên thiết bị và chỉ tải được sau khi có ID nhật ký từ máy chủ.";
-            } catch (imageQueueError) {
-              imageQueueNotice = ` Không lưu được hàng đợi ảnh: ${imageQueueError.message}`;
-            }
-          }
-          setSelectedImages(current => current.filter(image => !imageIdsToClear.has(image.id)));
-          setNotice(`Nhật ký đã lưu trong hàng đợi S-31.${imageQueueNotice}`);
-        } catch (queueError) {
-          setError(queueError.message || "Không thể lưu nhật ký vào hàng đợi trên thiết bị.");
-        }
-      } else {
-        setError(e.message);
-      }
+      setError(e.message || "Không thể lưu nhật ký trên thiết bị.");
     } finally {
       setSaving(false);
     }
@@ -926,6 +1111,17 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
           <label>Ngày<input type="date" value={diaryDate} onChange={e => setDiaryDate(e.target.value)}/></label>
           <label>Lọc theo hạng mục<select value={taskFilter} onChange={e => setTaskFilter(e.target.value)}><option value="">Tất cả hạng mục</option>{projectTasks.map(task => <option key={task.id} value={task.id}>{task.ten}</option>)}</select></label>
         </div>
+      </section>
+      <section className={`offline-storage ${storageNearlyFull || remainingDrafts <= 4 ? "warning" : ""}`} aria-live="polite">
+        <div>
+          <strong>{isOnline ? "Có kết nối mạng" : "Đang làm việc offline"}</strong>
+          <span>{storageInfo.pending} nhật ký đang chờ đồng bộ · còn chỗ cho {remainingDrafts}/{OFFLINE_DRAFT_LIMIT} mục offline</span>
+          {storageInfo.quota > 0 && <span>Dung lượng còn trống trên thiết bị: {formatFileSize(Math.max(0, storageInfo.quota - storageInfo.usage))}</span>}
+          {(storageNearlyFull || remainingDrafts <= 4) && <b className="offline-storage-warning">Dung lượng gần đầy. Hãy kết nối mạng để đồng bộ hoặc giải phóng chỗ trống.</b>}
+        </div>
+        {storageInfo.pending > 0 && <button type="button" className="offline-sync-button" onClick={syncOfflineDrafts} disabled={!navigator.onLine || isSyncing}>
+          {isSyncing ? "Đang đồng bộ…" : navigator.onLine ? "Đồng bộ ngay" : "Chờ có mạng để đồng bộ"}
+        </button>}
       </section>
       <section className="panel daily-summary">
         <div className="panel-head"><div><h2>Tình hình trong ngày</h2><p>Nhân lực, thiết bị sử dụng và thời tiết tại công trường.</p></div></div>
@@ -1021,11 +1217,16 @@ function Diary({canWrite, enqueueItems, imageUploadQueue}) {
         <div className="panel-head"><div><h2>Nhật ký ngày {diaryDate}</h2><p>{project || "Đang tải công trình"}</p></div></div>
         {entries.length ? <div className="diary-entries">{entries.map(entry => <article className="diary-entry" key={entry.id}>
           <time>{entry.gio}</time><div><strong>{entry.hang_muc}</strong><p>{entry.noi_dung}</p><small>Người ghi: {entry.nguoi_lap}</small>
+            {entry.offline_pending && <div className="offline-entry-state">
+              <span className="diary-upload-status">Chưa đồng bộ · đã lưu trên máy</span>
+              {entry.sync_error && <small className="diary-image-error">{entry.sync_error}</small>}
+              <button type="button" className="diary-retry" onClick={syncOfflineDrafts} disabled={!navigator.onLine || isSyncing}><RotateCw size={13}/> Đồng bộ lại</button>
+            </div>}
             {entry.images?.length > 0 && <div className="diary-saved-images">{entry.images.map((image, index) => <figure key={image.id || `${image.url}-${index}`}>
               <button type="button" onClick={() => openLightbox(image.url, image.ghi_chu || `Ảnh hiện trường ${index + 1}`)} aria-label="Mở ảnh hiện trường">
                 <img src={image.thumbnail_url || image.url} loading="lazy" alt={image.ghi_chu || `Ảnh hiện trường ${index + 1}`}/>
               </button>
-              <span className="diary-upload-status uploaded">Đã tải</span>
+              <span className={`diary-upload-status ${entry.offline_pending ? "" : "uploaded"}`}>{entry.offline_pending ? "Ảnh lưu trên thiết bị" : "Đã tải"}</span>
               {image.ghi_chu && <figcaption>{image.ghi_chu}</figcaption>}
             </figure>)}</div>}
           </div>
