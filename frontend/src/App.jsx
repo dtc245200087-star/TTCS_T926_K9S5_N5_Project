@@ -47,11 +47,8 @@ const menu = [
   ["Vật tư", Package],
   ["Thiết bị", Truck],
   ["Nhật ký thi công", BookOpen],
- feature/s36-acceptance-batch
-  ["Phiếu nghiệm thu", ClipboardList],
 
   ["Nhật ký thao tác", History],
-develop
   ["Báo cáo", BarChart3],
   ["Cài đặt", Settings],
 ];
@@ -336,12 +333,10 @@ function App({ user, onLogout, onPasswordChanged }) {
          page === "Vật tư" ? <Materials/> :
 
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} imageUploadQueue={imageUploadQueue}/> :
- feature/s36-acceptance-batch
          page === "Phiếu nghiệm thu" ? <AcceptancePage user={user}/> :
-
+         page === "Duyệt nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
 
          page === "Nhật ký thao tác" ? <AuditLogPage/> :
- develop
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :
          <Placeholder title={page}/>}
         {selectedTask && progressForm && <ProgressFormModal
