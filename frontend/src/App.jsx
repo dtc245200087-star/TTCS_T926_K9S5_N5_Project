@@ -20,6 +20,8 @@ import {
 import "./milestone.css";
 import "./task-progress.css";
 import S06DependencyPage from "./components/S06DependencyPage.jsx";
+
+import AcceptancePage from "./components/AcceptancePage.jsx";
 import { useDiaryImageUploadQueue } from "./hooks/useDiaryImageUploadQueue.js";
 import DiaryImageUploadStatus from "./components/DiaryImageUploadStatus.jsx";
 import DiaryConflictModal from "./components/DiaryConflictModal.jsx";
@@ -43,6 +45,7 @@ const menu = [
   ["Hạng mục", ClipboardList],
   ["Mốc bàn giao", CalendarDays],
   ["Phiếu nghiệm thu", ClipboardList],
+  ["Duyệt nghiệm thu", ClipboardList],
   ["Công việc", ClipboardList],
   ["Quan hệ phụ thuộc (S-06)", ClipboardList],
   ["Tiến độ và đường găng", TrendingUp],
@@ -50,6 +53,7 @@ const menu = [
   ["Vật tư", Package],
   ["Thiết bị", Truck],
   ["Nhật ký thi công", BookOpen],
+
   ["Nhật ký thao tác", History],
   ["Báo cáo", BarChart3],
   ["Cài đặt", Settings],
@@ -327,7 +331,8 @@ function App({ user, offlineMode, onLogout, onPasswordChanged }) {
          page === "Công trình" ? <Projects data={data?.cong_trinh_data || []} refresh={loadDashboard} canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Hạng mục" ? <CategoryTree canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Mốc bàn giao" ? <MilestoneAlerts/> :
-         page === "Phiếu nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
+         page === "Phiếu nghiệm thu" ? <AcceptancePage user={user}/> :
+         page === "Duyệt nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
          page === "Tiến độ và đường găng" ? <SchedulePage tasks={taskData} scheduleResults={scheduleData.schedule_results} hasCycle={scheduleData.has_cycle} scheduleMessage={scheduleData.message} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError} baseline={baseline} baselineLoading={baselineLoading} baselineError={baselineError} baselineSaving={baselineSaving} baselineSuccess={baselineSuccess} canManageBaseline={canManageBaseline} onCaptureBaseline={captureScheduleBaseline}/> :
          page === "Công việc" ? <Tasks data={taskData} canUpdate={canUpdateProgress} onOpenProgress={openProgressForm} error={tasksError}/> :
          page === "Quan hệ phụ thuộc (S-06)" ? <S06DependencyPage/> :
@@ -347,6 +352,9 @@ page === "Nhật ký thi công" ? (
 ) :
 
          page === "Nhật ký thi công" ? <Diary canWrite={["admin", "manager", "engineer"].includes(user.role)} enqueueItems={syncQueue.enqueueItems} imageUploadQueue={imageUploadQueue}/> :
+         page === "Phiếu nghiệm thu" ? <AcceptancePage user={user}/> :
+         page === "Duyệt nghiệm thu" ? <AcceptanceApproval canManage={["admin", "manager"].includes(user.role)}/> :
+
          page === "Nhật ký thao tác" ? <AuditLogPage/> :
 
          page === "Cài đặt" ? <SettingsPage user={user} onPasswordChanged={onPasswordChanged}/> :

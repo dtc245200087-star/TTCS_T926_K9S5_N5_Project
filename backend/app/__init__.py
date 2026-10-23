@@ -10,6 +10,7 @@ from .models import cong_viec as tasks
 from .models import milestone as milestones
 from .models import user as users
 from .routes.api import api
+from .routes.acceptance import acceptance, initialize as initialize_acceptance
 from .routes.auth import auth
 from .routes.cong_viec_routes import cong_viec_bp
 
@@ -36,13 +37,39 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
 
-    
     user_database = Path(app.config["USER_DATABASE"])
     user_database.parent.mkdir(parents=True, exist_ok=True)
 
+    # Khởi tạo bảng tài khoản trước khi tạo dữ liệu khác
     users.initialize_database(str(user_database))
     tasks.initialize_database(str(user_database))
     milestones.initialize_database(str(user_database))
+
+
+    # Chỉ tạo admin lần đầu, không ghi đè tài khoản cũ
+    if users.count_users(str(user_database)) == 0:
+        username = os.environ.get(
+            "INITIAL_ADMIN_USERNAME", "admin"
+        )
+        password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+
+        if not password or not 12 <= len(password) <= 256:
+            raise RuntimeError(
+                "Hãy cấu hình INITIAL_ADMIN_PASSWORD "
+                "từ 12 đến 256 ký tự."
+            )
+
+        users.create_user(
+            str(user_database),
+            username=username,
+            full_name=os.environ.get(
+                "INITIAL_ADMIN_FULL_NAME", "Quản trị viên"
+            ),
+            password=password,
+            role="admin",
+        )
+
+    initialize_acceptance(str(user_database))
 
     if users.count_users(str(user_database)) == 0:
         username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
@@ -69,6 +96,7 @@ def create_app(test_config=None):
 
     # 2. Đăng ký các Blueprint
     app.register_blueprint(api, url_prefix='/api')
+    app.register_blueprint(acceptance, url_prefix='/api')
     app.register_blueprint(auth, url_prefix='/api/auth')
     app.register_blueprint(cong_viec_bp)  # Đăng ký Blueprint quản lý công việc S-25
 
